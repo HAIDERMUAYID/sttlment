@@ -1,0 +1,629 @@
+/* ============================================
+   قاعدة نهائية: خلفية داكنة → نص أبيض، خلفية فاتحة → نص غامق
+   ============================================ */
+
+/* رأس جدول بخلفية داكنة — كل النص والأرقام أبيض وواضح */
+.table-header-dark,
+.table-header-dark *,
+.table-header-dark th,
+.table-header-dark td,
+.table-header-dark div,
+.table-header-dark span,
+.table-header-dark p {
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+
+/* رأس جدول إدارة التجار — ثابت عند التمرير (مثل Excel)
+ * التمرير على مستوى الصفحة، فالرأس يلتصق بأعلى منطقة المحتوى */
+.merchants-table-scroll {
+  overflow-anchor: none;
+}
+.merchants-table-sticky .merchants-sticky-header-row th {
+  position: sticky !important;
+  position: -webkit-sticky !important;
+  top: 0 !important;
+  z-index: 50 !important;
+  background: linear-gradient(135deg, #026174 0%, #068294 100%) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+.merchants-table-sticky .merchants-sticky-filter-row th {
+  position: sticky !important;
+  position: -webkit-sticky !important;
+  top: 52px !important;
+  z-index: 49 !important;
+  background: linear-gradient(180deg, #eef9fb 0%, #e4f4f7 100%) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+/* صف الفلاتر — ألوان متناسقة مع التصميم */
+.excel-filter-row {
+  background: linear-gradient(180deg, #eef9fb 0%, #e4f4f7 100%) !important;
+  border-bottom: 1px solid #9dc5cd !important;
+}
+.excel-filter-cell {
+  padding: 4px 6px !important;
+  vertical-align: middle !important;
+  border-left: 1px solid #b8dce2 !important;
+  background: linear-gradient(180deg, #eef9fb 0%, #e4f4f7 100%) !important;
+  font-weight: normal !important;
+  color: #0f172a !important;
+}
+.excel-filter-cell:first-child {
+  border-right: 1px solid #b8dce2 !important;
+}
+/* أزرار الفلتر في جدول التجار */
+.merchant-filter-trigger {
+  border: 1px solid #b8dce2 !important;
+  background: #fff !important;
+}
+.merchant-filter-trigger:hover {
+  border-color: #026174 !important;
+  background: #eef9fb !important;
+}
+.merchant-filter-trigger-active {
+  border: 1.5px solid #026174 !important;
+  background: #e4f4f7 !important;
+}
+.merchant-filter-trigger-active:hover {
+  background: #d4eef3 !important;
+}
+
+/* شريط فلاتر إدارة التجار — ألوان محسّنة */
+.merchants-filter-input-wrapper,
+.merchants-filter-select-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  background: #fff;
+  border: 2px solid #b8dce2;
+  border-radius: 12px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.merchants-filter-input-wrapper:hover,
+.merchants-filter-select-wrapper:hover {
+  border-color: #026174;
+}
+.merchants-filter-input-wrapper:focus-within,
+.merchants-filter-select-wrapper:focus-within {
+  border-color: #026174;
+  box-shadow: 0 0 0 3px rgba(2, 97, 116, 0.15);
+}
+.merchants-filter-input,
+.merchants-filter-select {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 0;
+  border: none !important;
+  background: transparent !important;
+  font-size: 0.95rem !important;
+  color: #0f172a !important;
+  outline: none !important;
+}
+.merchants-filter-input::placeholder {
+  color: #64748b !important;
+}
+.merchants-filter-select {
+  cursor: pointer;
+  appearance: auto;
+}
+.merchants-clear-filters-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  border-radius: 12px;
+  border: 2px solid #026174;
+  background: #fff;
+  color: #026174;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.merchants-clear-filters-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, #026174 0%, #068294 100%);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(2, 97, 116, 0.3);
+}
+.merchants-clear-filters-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* شريط فلاتر RTGS — نفس تصميم الصورة: حدود teal فاتحة، أبيض عند التركيز أزرق */
+.rtgs-filter-card {
+  color: #0f172a;
+  background: #fff !important;
+}
+/* حدود teal فاتحة (#86C4C4) مثل الصورة */
+.rtgs-filter-card .merchants-filter-input-wrapper,
+.rtgs-filter-card .merchants-filter-select-wrapper,
+.rtgs-filter-card .rtgs-multiselect-trigger {
+  border: 2px solid #86C4C4 !important;
+  background: #fff !important;
+  border-radius: 12px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.rtgs-filter-card .merchants-filter-input-wrapper:hover,
+.rtgs-filter-card .merchants-filter-select-wrapper:hover,
+.rtgs-filter-card .rtgs-multiselect-trigger:hover {
+  border-color: #5ba3b3 !important;
+}
+.rtgs-filter-card .merchants-filter-input-wrapper:focus-within,
+.rtgs-filter-card .merchants-filter-select-wrapper:focus-within,
+.rtgs-filter-card .rtgs-multiselect-trigger:focus-within {
+  border-color: #0284c7 !important;
+  box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.2);
+}
+.rtgs-filter-card .merchants-filter-input,
+.rtgs-filter-card .merchants-filter-select {
+  color: #0f172a !important;
+}
+.rtgs-filter-card .rtgs-multiselect-trigger {
+  border: 2px solid #86C4C4 !important;
+  background: #fff !important;
+  color: #0f172a !important;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.rtgs-filter-card .rtgs-multiselect-label {
+  color: #0f172a !important;
+}
+.rtgs-filter-card .rtgs-multiselect-trigger:hover,
+.rtgs-filter-card .rtgs-multiselect-open .rtgs-multiselect-trigger {
+  border-color: #5ba3b3 !important;
+  background: #fff !important;
+}
+.rtgs-filter-card .rtgs-apply-btn {
+  background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%) !important;
+  border: none;
+  color: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(13, 148, 136, 0.35);
+}
+.rtgs-filter-card .rtgs-apply-btn:hover {
+  background: linear-gradient(135deg, #0f766e 0%, #115e59 100%) !important;
+  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.45);
+}
+
+.excel-filter-input,
+.excel-filter-select {
+  width: 100% !important;
+  min-width: 0 !important;
+  padding: 4px 8px !important;
+  font-size: 12px !important;
+  line-height: 1.35 !important;
+  border: 1px solid #b8dce2 !important;
+  border-radius: 6px !important;
+  background: #fff !important;
+  color: #0f172a !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+.excel-filter-input:focus,
+.excel-filter-select:focus {
+  border-color: #026174 !important;
+  box-shadow: 0 0 0 2px rgba(2, 97, 116, 0.15) !important;
+}
+.excel-filter-select {
+  cursor: pointer !important;
+  appearance: auto !important;
+}
+
+/* قائمة منسدلة قابلة للبحث في صف الفلاتر — مظهر متناسق */
+.excel-searchable-select {
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 4px 8px !important;
+  font-size: 12px !important;
+  line-height: 1.35 !important;
+  border: 1px solid #b8dce2 !important;
+  border-radius: 6px !important;
+  background: #fff !important;
+  color: #0f172a !important;
+  box-shadow: none !important;
+  text-align: start !important;
+}
+.excel-searchable-select:hover {
+  border-color: #026174 !important;
+  background: #eef9fb !important;
+}
+
+/* أي حاوية بخلفية داكنة/تضليل — كل النص أبيض */
+.bg-dark-teal,
+.bg-dark-teal *:not(button[style*="background: #fff"]):not(button[style*="background:#fff"]) {
+  color: #ffffff !important;
+}
+
+/* صفحات بخلفية داكنة (slate-800) — كل النص فاتح */
+.page-dark-theme,
+.page-dark-theme h1,
+.page-dark-theme h2,
+.page-dark-theme h3,
+.page-dark-theme p,
+.page-dark-theme span,
+.page-dark-theme div,
+.page-dark-theme label,
+.page-dark-theme li,
+.page-dark-theme td,
+.page-dark-theme th {
+  color: #e2e8f0 !important;
+}
+.page-dark-theme .text-slate-100 {
+  color: #f1f5f9 !important;
+}
+.page-dark-theme .text-slate-300 {
+  color: #cbd5e1 !important;
+}
+
+/* ============================================
+   Semantic Tokens — ألوان رسمية Enterprise-grade
+   لوحة Color Hunt: #09637E #088395 #7AB2B2 #EBF4F6
+   https://colorhunt.co/palette/09637e0883957ab2b2ebf4f6
+   ============================================ */
+:root {
+  /* Brand — Primary */
+  --primary-600: #088395;
+  --primary-700: #09637e;
+  --primary-800: #026174;
+  --accent-300: #7ab2b2;
+
+  /* Surfaces */
+  --bg: #f6fafb;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+
+  /* Text */
+  --text-strong: #0f172a;
+  --text: #1e293b;
+  --text-muted: #475569;
+  --placeholder: #94a3b8;
+
+  /* Borders / Rings */
+  --border: #e2e8f0;
+  --border-card: #cbd5e1;
+  --ring: rgba(8, 131, 149, 0.35);
+
+  /* Status */
+  --success: #16a34a;
+  --warning: #f59e0b;
+  --danger: #dc2626;
+  --info: #0ea5e9;
+
+  /* Radius / Shadow */
+  --radius-lg: 14px;
+  --radius-md: 12px;
+  --shadow-soft: 0 10px 30px rgba(2, 97, 116, 0.12);
+  --shadow-card: 0 6px 18px rgba(15, 23, 42, 0.08);
+
+  /* Legacy (للتوافق) */
+  --palette-dark: #09637E;
+  --palette-primary: #088395;
+  --palette-mint: #7AB2B2;
+  --palette-bg: #f6fafb;
+  --brand-primary: #088395;
+  --brand-primary-hover: #09637E;
+  --brand-primary-light: rgba(8, 131, 149, 0.12);
+  --brand-primary-border: rgba(8, 131, 149, 0.35);
+  --brand-muted: #7AB2B2;
+  --brand-border: rgba(8, 131, 149, 0.28);
+  --brand-input-bg: #ffffff;
+  --brand-card: #ffffff;
+}
+
+.modal-primary-btn {
+  background: var(--brand-primary) !important;
+  color: #fff !important;
+  border: none !important;
+  box-shadow: 0 2px 8px rgba(8, 131, 149, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+.modal-primary-btn:hover {
+  background: var(--brand-primary-hover) !important;
+  box-shadow: 0 4px 14px rgba(9, 99, 126, 0.4);
+}
+.modal-primary-btn:active {
+  transform: scale(0.98);
+}
+
+.input-formal {
+  border-color: var(--brand-border) !important;
+  background: var(--brand-input-bg) !important;
+}
+.input-formal:focus {
+  border-color: var(--brand-primary) !important;
+  box-shadow: 0 0 0 2px var(--brand-primary-light);
+}
+
+.card-formal:hover {
+  box-shadow: 0 12px 28px rgba(8, 131, 149, 0.15);
+  transform: translateY(-2px);
+}
+
+@keyframes formal-fade-in-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-formal-in {
+  animation: formal-fade-in-up 0.4s ease-out forwards;
+}
+
+@keyframes brand-glow {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+.brand-glow {
+  animation: brand-glow 2.5s ease-in-out infinite;
+}
+
+/* الشريط الجانبي: وضوح النص */
+.app-sidebar nav a span,
+.app-sidebar nav a svg {
+  color: inherit !important;
+}
+/* عند اختيار الخيار (نشط): النص والأيقونة أبيض لقراءة أوضح */
+.app-sidebar nav .sidebar-nav-item-active,
+.app-sidebar nav .sidebar-nav-item-active span,
+.app-sidebar nav .sidebar-nav-item-active svg {
+  color: #ffffff !important;
+}
+/* عند الوقوف على الخيار (hover): النص والأيقونة أبيض لقراءة أوضح */
+.app-sidebar nav a:hover .sidebar-nav-item,
+.app-sidebar nav a:hover .sidebar-nav-item span,
+.app-sidebar nav a:hover .sidebar-nav-item svg {
+  color: #ffffff !important;
+}
+.app-sidebar nav .sidebar-nav-item:hover span,
+.app-sidebar nav .sidebar-nav-item:hover svg {
+  color: #ffffff !important;
+}
+.app-sidebar nav h3 {
+  color: #09637E !important;
+}
+.app-sidebar .sidebar-footer p {
+  color: #09637E !important;
+}
+
+/* شريط التحكم العلوي في الشريط الجانبي — أيقونات ونص أبيض لوضوح حديث */
+.sidebar-top-bar,
+.sidebar-top-bar p,
+.sidebar-top-bar button,
+.sidebar-top-bar svg {
+  color: #ffffff !important;
+}
+.sidebar-top-bar button:hover {
+  background: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* رأس كل صفحة: إذا الخلفية تيل، النص والأيقونات أبيض لقراءة أوضح */
+.header-teal-bg,
+.header-teal-bg p,
+.header-teal-bg h1,
+.header-teal-bg h2,
+.header-teal-bg span,
+.header-teal-bg svg {
+  color: #ffffff !important;
+}
+.header-teal-bg .text-white\/90 {
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+.page-header-teal,
+.page-header-teal h1,
+.page-header-teal h2,
+.page-header-teal p,
+.page-header-teal span,
+.page-header-teal input,
+.page-header-teal svg {
+  color: #ffffff !important;
+}
+/* أزرار داخل الهيدر التيل تحتفظ بلونها إن كان لها خلفية (مثل زر أبيض) */
+.page-header-teal input::placeholder {
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+/* رأس جدول RTGS التيل: النص والأيقونات أبيض لقراءة أوضح */
+.rtgs-table-header-teal,
+.rtgs-table-header-teal th,
+.rtgs-table-header-teal span,
+.rtgs-table-header-teal button,
+.rtgs-table-header-teal svg {
+  color: #ffffff !important;
+}
+
+/* نافذة فلتر RTGS (مثل فلتر MCC): كل المحتويات نص داكن لقراءة أوضح */
+.rtgs-filter-popover,
+.rtgs-filter-popover p,
+.rtgs-filter-popover input,
+.rtgs-filter-popover label,
+.rtgs-filter-popover span,
+.rtgs-filter-popover button:not([style*="background"]) {
+  color: #0f172a !important;
+}
+.rtgs-filter-popover input::placeholder {
+  color: #64748b !important;
+}
+
+/* ============================================
+   شريط التمرير — ألوان رسمية (تيل، بدون وردي/أرجواني)
+   ============================================ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary-700) var(--surface-2);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--surface-2);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--primary-700), var(--primary-600));
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--primary-800), var(--primary-700));
+}
+
+/* القوائم المنسدلة والنوافذ — نص واضح على خلفية بيضاء */
+[data-radix-popper-content-wrapper] *,
+[role="dialog"] *,
+[role="listbox"] * {
+  scrollbar-color: #068294 #f1f5f9;
+}
+
+/* نافذة الاختيار (SearchableSelect) — كل النص غامق وواضح */
+.select-modal-formal h2,
+.select-modal-formal p,
+.select-modal-formal span,
+.select-modal-formal input,
+.select-modal-formal button {
+  color: #1e293b !important;
+}
+.select-modal-formal input::placeholder {
+  color: var(--placeholder) !important;
+}
+
+/* ============================================
+   Design System — مكونات Enterprise-grade
+   ============================================ */
+
+/* Input */
+.ds-input {
+  background: var(--surface) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+  padding: 10px 12px !important;
+  color: var(--text) !important;
+  outline: none !important;
+  font-size: 16px !important;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease !important;
+}
+.ds-input::placeholder {
+  color: var(--placeholder) !important;
+}
+.ds-input:hover {
+  border-color: rgba(8, 131, 149, 0.35) !important;
+}
+.ds-input:focus {
+  border-color: var(--primary-600) !important;
+  box-shadow: 0 0 0 4px var(--ring) !important;
+}
+.ds-input[aria-invalid="true"] {
+  border-color: rgba(220, 38, 38, 0.55) !important;
+  box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.15) !important;
+}
+
+/* Buttons */
+.ds-btn {
+  border-radius: var(--radius-md) !important;
+  padding: 10px 14px !important;
+  font-weight: 700 !important;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease !important;
+}
+.ds-btn:active {
+  transform: translateY(1px) !important;
+}
+.ds-btn-primary {
+  color: #fff !important;
+  background: linear-gradient(135deg, var(--primary-800), var(--primary-600)) !important;
+  box-shadow: var(--shadow-soft) !important;
+}
+.ds-btn-primary:hover {
+  background: linear-gradient(135deg, var(--primary-700), var(--primary-600)) !important;
+}
+.ds-btn-outline {
+  background: var(--surface) !important;
+  color: var(--primary-800) !important;
+  border: 1px solid rgba(8, 131, 149, 0.35) !important;
+}
+.ds-btn-outline:hover {
+  background: rgba(8, 131, 149, 0.06) !important;
+}
+.ds-btn-ghost {
+  background: transparent !important;
+  color: var(--primary-800) !important;
+}
+.ds-btn-ghost:hover {
+  background: rgba(8, 131, 149, 0.08) !important;
+}
+.ds-btn-danger {
+  background: var(--surface) !important;
+  border: 1px solid rgba(220, 38, 38, 0.35) !important;
+  color: var(--danger) !important;
+}
+.ds-btn-danger:hover {
+  background: rgba(220, 38, 38, 0.06) !important;
+}
+
+/* Table */
+.ds-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+.ds-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: linear-gradient(135deg, var(--primary-800), var(--primary-600));
+  color: #fff;
+  text-align: right;
+  padding: 12px 14px;
+  font-weight: 800;
+}
+.ds-table tbody td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.ds-table tbody tr:nth-child(even) {
+  background: rgba(2, 97, 116, 0.03);
+}
+.ds-table tbody tr:hover {
+  background: rgba(8, 131, 149, 0.08);
+}
+
+/* Popover / Dropdown */
+.ds-popover {
+  background: var(--surface) !important;
+  border: 1px solid rgba(2, 97, 116, 0.18) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-card) !important;
+  color: var(--text) !important;
+}
+.ds-option:hover {
+  background: rgba(8, 131, 149, 0.08) !important;
+}
+.ds-option[aria-selected="true"] {
+  background: rgba(8, 131, 149, 0.12) !important;
+  color: var(--primary-800) !important;
+  font-weight: 800 !important;
+}
+
+/* لمعان الكرت عند الـ hover — تأثير تمرير ضوئي (شفاف حتى لا يغطي القيم) */
+@keyframes card-shine {
+  0% { transform: translateX(-100%) skewX(-15deg); opacity: 0; }
+  40% { opacity: 0.25; }
+  100% { transform: translateX(200%) skewX(-15deg); opacity: 0; }
+}
+.card-shine-hover {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.25),
+    transparent
+  );
+  width: 50%;
+  transform: translateX(-100%) skewX(-15deg);
+}
+.group:hover .card-shine-hover {
+  animation: card-shine 0.6s ease-out forwards;
+}

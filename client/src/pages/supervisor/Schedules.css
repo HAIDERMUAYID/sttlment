@@ -1,0 +1,24 @@
+.schedules-page {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.days-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.5rem;
+}
+
+.day-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.day-checkbox input[type="checkbox"] {
+  width: auto;
+}

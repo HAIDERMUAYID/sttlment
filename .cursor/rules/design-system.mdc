@@ -1,0 +1,118 @@
+---
+description: Design System — نظام تصميم Enterprise-grade. Semantic tokens، typography، مكونات رسمية. يُطبق عند إنشاء أو تعديل أي واجهة.
+globs:
+  - client/src/**/*.{tsx,ts,jsx,js,css}
+  - client/src/**/*
+alwaysApply: false
+---
+
+# Design System — نظام التصميم الرسمي
+
+## الاستخدام
+اكتب: **@design-system** عند طلب فحص أو تصحيح التصميم
+
+---
+
+## 1. Semantic Tokens (CSS Variables)
+
+**استخدم المتغيرات دائماً، لا HEX مباشرة.**
+
+```css
+/* Brand */
+--primary-600: #088395;
+--primary-700: #09637e;
+--primary-800: #026174;
+--accent-300: #7ab2b2;
+
+/* Surfaces */
+--bg: #f6fafb;           /* خلفية التطبيق (أفضل من EBF4F6) */
+--surface: #ffffff;
+--surface-2: #f1f5f9;
+
+/* Text */
+--text-strong: #0f172a;
+--text: #1e293b;
+--text-muted: #475569;
+--placeholder: #94a3b8;
+
+/* Borders / Rings */
+--border: #e2e8f0;
+--border-card: #cbd5e1;   /* حدود أوضح للكروت */
+--ring: rgba(8, 131, 149, 0.35);
+
+/* Status */
+--success: #16a34a;
+--warning: #f59e0b;
+--danger: #dc2626;
+--info: #0ea5e9;
+
+/* Radius / Shadow */
+--radius-lg: 14px;
+--radius-md: 12px;
+--shadow-soft: 0 10px 30px rgba(2, 97, 116, 0.12);
+--shadow-card: 0 6px 18px rgba(15, 23, 42, 0.08);
+```
+
+---
+
+## 2. Typography
+
+- **html:** font-size: 16px (لا تقل عن 15)
+- **body:** line-height: 1.7 للعربي
+- **Font:** Cairo, Tajawal, system-ui
+- **العناوين:** 20–28px، color: var(--text-strong)
+- **النص:** 16px، color: var(--text)
+- **Muted:** color: var(--text-muted)
+
+---
+
+## 3. قواعد التباين
+- خلفية فاتحة → النص: var(--text) أو var(--text-strong)
+- خلفية داكنة/تيل → النص: #ffffff
+- Placeholder: var(--placeholder)
+
+---
+
+## 4. مكونات DS (استخدم هذه الـ classes)
+
+### Input — ds-input
+- خلفية var(--surface)، حدود var(--border)
+- focus: border var(--primary-600)، box-shadow var(--ring)
+- aria-invalid: أحمر مع خلفية خفيفة
+
+### Buttons — ds-btn-primary, ds-btn-outline, ds-btn-ghost, ds-btn-danger
+- primary: تدرج primary-800 → primary-600، أبيض
+- outline: حدود تيل، نص primary-800
+- ghost: شفاف، hover خفيف
+- danger: حدود أحمر، نص danger
+
+### Table — ds-table
+- Sticky header، تدرج تيل، نص أبيض
+- Zebra صفوف (even: rgba تيل خفيف)
+- Hover: rgba(8,131,149,.08)
+
+### Popover — ds-popover, ds-option
+- خلفية var(--surface)
+- العنصر المحدد: aria-selected، خلفية rgba تيل، font-weight 800
+
+---
+
+## 5. Classes للمرجعية
+- `page-header-teal` — هيدر تيل (نص أبيض)
+- `table-header-dark` / `rtgs-table-header-teal` — رأس جدول
+- `rtgs-filter-popover` — نوافذ الفلتر
+- `page-dark-theme` — صفحات داكنة
+
+---
+
+## 6. اللمسة الحديثة
+- Shadow واحد للكروت (--shadow-card)
+- Border subtle + radius 12–14
+- Micro-interactions (hover / active)
+- Icons: lucide-react
+
+---
+
+## 7. الملفات
+- `client/src/styles/theme-formal.css` — Tokens + DS components
+- `client/src/index.css` — Typography + Base

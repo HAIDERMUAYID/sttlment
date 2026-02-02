@@ -1,0 +1,52 @@
+services:
+  - type: web
+    name: sttlment-api
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: POOL_MAX
+        value: "5"  # تقليل اتصالات DB — مناسب للـ Free tier
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sttlment-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: TIMEZONE
+        value: Asia/Baghdad
+
+databases:
+  - name: sttlment-db
+    plan: free
+    databaseName: sttlment
+    user: sttlment_user
+
+cronJobs:
+  - name: generate-daily-tasks
+    schedule: "0 1 * * *"
+    command: node server/cron/generateDailyTasks.js
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sttlment-db
+          property: connectionString
+      - key: TIMEZONE
+        value: Asia/Baghdad
+
+  - name: check-overdue-tasks
+    schedule: "*/30 * * * *"  # كل 30 دقيقة (بدلاً من 15) — توفير موارد
+    command: node server/cron/checkOverdueTasks.js
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sttlment-db
+          property: connectionString
+      - key: TIMEZONE
+        value: Asia/Baghdad

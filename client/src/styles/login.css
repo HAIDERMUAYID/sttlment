@@ -1,0 +1,138 @@
+/* Login Page Styles - أنماط صفحة تسجيل الدخول */
+/* الألوان الرسمية: تدرج teal للخلفية، #068294، #2A6E85 */
+
+.login-container {
+  width: 100vw !important;
+  height: 100vh !important;
+  background: linear-gradient(165deg, #a8dde4 0%, #c5e8ec 35%, #d8f2f5 70%, #e8f8fa 100%) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 2rem !important;
+  margin: 0 !important;
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  z-index: 9999 !important;
+}
+
+.login-box {
+  background: #ffffff !important;
+  border: 2px solid #2A6E85 !important;
+  border-radius: 1.5rem !important;
+  padding: 3rem !important;
+  max-width: 450px !important;
+  width: 100% !important;
+  box-shadow: 0 8px 24px rgba(42, 110, 133, 0.2) !important;
+  position: relative !important;
+  z-index: 10000 !important;
+}
+
+.login-header {
+  text-align: center !important;
+  margin-bottom: 2rem !important;
+}
+
+.login-logo {
+  width: 450px !important;
+  max-width: 80% !important;
+  height: auto !important;
+  margin: 0 auto 2rem !important;
+  display: block !important;
+  object-fit: contain !important;
+  text-align: center !important;
+}
+
+.login-header h1 {
+  font-size: 1.75rem !important;
+  font-weight: 700 !important;
+  color: #1a1a1a !important;
+  margin-bottom: 0.5rem !important;
+}
+
+.login-header p {
+  font-size: 1rem !important;
+  color: #444 !important;
+  font-weight: 500 !important;
+  margin-bottom: 0.25rem !important;
+}
+
+.login-header .subtitle {
+  font-size: 0.875rem !important;
+  color: #068294 !important;
+  font-weight: 600 !important;
+  margin-top: 0.5rem !important;
+}
+
+.quick-login-link {
+  display: inline-block !important;
+  margin-top: 1rem !important;
+  color: #068294 !important;
+  text-decoration: none !important;
+  font-size: 0.875rem !important;
+  font-weight: 600 !important;
+  transition: color 0.2s ease !important;
+}
+
+.quick-login-link:hover {
+  color: #2A6E85 !important;
+}
+
+.login-form {
+  margin-top: 2rem !important;
+}
+
+.form-group {
+  margin-bottom: 1.5rem !important;
+}
+
+.form-group label {
+  display: block !important;
+  font-size: 0.875rem !important;
+  font-weight: 600 !important;
+  color: #1a1a1a !important;
+  margin-bottom: 0.5rem !important;
+}
+
+.form-group input {
+  width: 100% !important;
+  padding: 0.75rem !important;
+  border: 2px solid #2A6E85 !important;
+  border-radius: 0.5rem !important;
+  font-size: 1rem !important;
+  color: #1a1a1a !important;
+  font-weight: 500 !important;
+  background: #ffffff !important;
+  transition: all 0.2s ease !important;
+  box-sizing: border-box !important;
+}
+
+.form-group input:focus {
+  outline: none !important;
+  border-color: #068294 !important;
+  box-shadow: 0 0 0 3px rgba(6, 130, 148, 0.1) !important;
+}
+
+.btn-login {
+  width: 100% !important;
+  padding: 0.875rem !important;
+  background: #068294 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 0.5rem !important;
+  font-size: 1rem !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+
+.btn-login:hover:not(:disabled) {
+  background: #2A6E85 !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 12px rgba(6, 130, 148, 0.3) !important;
+}
+
+.btn-login:disabled {
+  opacity: 0.6 !important;
+  cursor: not-allowed !important;
+}

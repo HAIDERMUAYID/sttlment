@@ -1,0 +1,118 @@
+/* ============================================
+   Base Styles - الأنماط الأساسية
+   ============================================ */
+  * {
+    border-color: hsl(var(--border));
+  }
+  
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: 'Cairo', 'Inter', system-ui, -apple-system, sans-serif;
+    direction: rtl;
+    font-feature-settings: 'kern' 1;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  
+  /* ============================================
+     Typography - الطباعة
+     ============================================ */
+  h1, h2, h3, h4, h5, h6 {
+    color: hsl(var(--foreground));
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+  }
+  
+  h1 {
+    font-size: 2.25rem; /* 36px */
+    font-weight: 800;
+  }
+  
+  h2 {
+    font-size: 1.875rem; /* 30px */
+    font-weight: 700;
+  }
+  
+  h3 {
+    font-size: 1.5rem; /* 24px */
+    font-weight: 600;
+  }
+  
+  h4 {
+    font-size: 1.25rem; /* 20px */
+    font-weight: 600;
+  }
+  
+  h5 {
+    font-size: 1.125rem; /* 18px */
+    font-weight: 600;
+  }
+  
+  h6 {
+    font-size: 1rem; /* 16px */
+    font-weight: 600;
+  }
+  
+  p, span, div, label, li {
+    color: hsl(var(--foreground));
+    line-height: 1.6;
+  }
+  
+  /* ============================================
+     Links - الروابط
+     ============================================ */
+  a {
+    color: hsl(var(--primary));
+    text-decoration: none;
+    transition: color 0.2s ease;
+  }
+  
+  a:hover {
+    color: hsl(var(--primary-hover));
+  }
+  
+  /* ============================================
+     Selection - التحديد
+     ============================================ */
+  ::selection {
+    background: hsl(var(--primary) / 0.2);
+    color: hsl(var(--foreground));
+  }
+  
+  /* ============================================
+     Focus - التركيز
+     ============================================ */
+  *:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: calc(var(--radius) - 2px);
+  }
+  
+  /* ============================================
+     Scrollbar - شريط التمرير
+     ============================================ */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--muted));
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--primary) / 0.3);
+    border-radius: 5px;
+    transition: background 0.2s ease;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary) / 0.5);
+  }

@@ -1,0 +1,147 @@
+/* ============================================
+   Accessibility - إمكانية الوصول
+   ============================================ */
+
+/* ============================================
+   Reduced Motion - تقليل الحركة
+   ============================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ============================================
+   High Contrast - تباين عالي
+   ============================================ */
+@media (prefers-contrast: high) {
+  :root {
+    --border: 0 0 0;                    /* Black borders */
+    --foreground: 0 0 0;               /* Black text */
+    --background: 255 255 255;         /* White background */
+    --primary: 0 0 255;                 /* Blue */
+    --destructive: 255 0 0;             /* Red */
+    --success: 0 128 0;                 /* Green */
+  }
+  
+  .card,
+  .btn-primary,
+  .input-enhanced {
+    border-width: 2px;
+  }
+}
+
+/* ============================================
+   Print Styles - أنماط الطباعة
+   ============================================ */
+@media print {
+  * {
+    background: white !important;
+    color: black !important;
+    box-shadow: none !important;
+  }
+  
+  .no-print {
+    display: none !important;
+  }
+  
+  .print-only {
+    display: block !important;
+  }
+  
+  a {
+    text-decoration: underline;
+  }
+  
+  .page-break {
+    page-break-after: always;
+  }
+  
+  .page-break-avoid {
+    page-break-inside: avoid;
+  }
+}
+
+/* ============================================
+   Focus Visible - التركيز المرئي
+   ============================================ */
+.focus-visible-ring {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+.focus-visible-ring:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+  border-radius: calc(var(--radius) - 2px);
+}
+
+/* ============================================
+   Screen Reader Only - للقارئ الشاشة فقط
+   ============================================ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.sr-only-focusable:focus {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: inherit;
+  margin: inherit;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+}
+
+/* ============================================
+   Skip Link - رابط التخطي
+   ============================================ */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  padding: 8px;
+  text-decoration: none;
+  z-index: 100;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* ============================================
+   ARIA States - حالات ARIA
+   ============================================ */
+[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+[aria-hidden="true"] {
+  display: none;
+}
+
+[aria-expanded="true"] .icon-collapsed {
+  display: none;
+}
+
+[aria-expanded="false"] .icon-expanded {
+  display: none;
+}
