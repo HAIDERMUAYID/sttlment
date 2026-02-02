@@ -11,9 +11,12 @@ export function useRealtimeTasks() {
   
   // Get WebSocket URL from environment or use default
   // Support CRA (process.env)
+  // Base URL (use-websocket يضيف /ws) — في الإنتاج نستخدم نفس الدومين
   const wsUrl =
     process.env.REACT_APP_WS_URL ||
-    (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.hostname + ':5001';
+    (typeof window !== 'undefined'
+      ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
+      : 'ws://localhost:5001');
   
   const { isConnected, on } = useWebSocket(wsUrl);
 

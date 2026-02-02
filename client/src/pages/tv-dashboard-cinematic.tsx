@@ -280,7 +280,10 @@ const TVDashboardCinematic: React.FC = () => {
 
   // WebSocket للاستماع للإشعارات
   useEffect(() => {
-    const wsUrl = process.env.REACT_APP_WS_URL || 'ws://localhost:5001/ws';
+    const wsUrl = process.env.REACT_APP_WS_URL ||
+      (typeof window !== 'undefined'
+        ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
+        : 'ws://localhost:5001/ws');
     let ws: WebSocket | null = null;
     
     try {
