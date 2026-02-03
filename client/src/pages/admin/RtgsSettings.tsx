@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
-import { FileSpreadsheet, Save, RefreshCw, Percent, Banknote, Calculator } from 'lucide-react';
+import { FileSpreadsheet, Save, RefreshCw, Percent, Banknote, Calculator, Plus, Trash2 } from 'lucide-react';
 import { useHasPermission } from '@/hooks/useHasPermission';
 
 const defaultSettings = {
@@ -19,6 +19,9 @@ const defaultSettings = {
     mcc_5542_rate: 0.007,
     mcc_5542_max_fee: 10000,
     mcc_5542_max_amount: 1428571,
+    mcc_5542_max_amount_date_from: '2025-02-02',
+    mcc_5542_max_amount_after_date: 2000000,
+    mcc_5542_rules: [] as { date_from: string; max_amount: number; max_fee: number; rate: number }[],
     default_rate: 0.01,
     default_max_fee: 10000,
     default_max_amount: 1000000,
@@ -44,9 +47,18 @@ export function RtgsSettings() {
 
   useEffect(() => {
     if (settings) {
+      const fees = { ...defaultSettings.fees, ...(settings.fees || {}) };
+      fees.mcc_5542_rules = Array.isArray(settings.fees?.mcc_5542_rules)
+        ? settings.fees.mcc_5542_rules.map((r: any) => ({
+            date_from: (r?.date_from || '').toString().slice(0, 10),
+            max_amount: Number(r?.max_amount) ?? 2000000,
+            max_fee: Number(r?.max_fee) ?? 10000,
+            rate: Number(r?.rate) ?? 0.007,
+          }))
+        : [];
       setFormData({
         amount: { ...defaultSettings.amount, ...(settings.amount || {}) },
-        fees: { ...defaultSettings.fees, ...(settings.fees || {}) },
+        fees,
         acq: { ...defaultSettings.acq, ...(settings.acq || {}) },
         match_tolerance: settings.match_tolerance ?? defaultSettings.match_tolerance,
       });
@@ -81,6 +93,25 @@ export function RtgsSettings() {
       ...prev,
       [section]: { ...(prev as any)[section], [field]: value },
     }));
+  };
+
+  const rules5542 = Array.isArray((formData.fees as any).mcc_5542_rules) ? (formData.fees as any).mcc_5542_rules : [];
+  const add5542Rule = () => {
+    setFormData((prev) => ({
+      ...prev,
+      fees: {
+        ...prev.fees,
+        mcc_5542_rules: [...rules5542, { date_from: '2025-02-02', max_amount: 2000000, max_fee: 10000, rate: 0.007 }],
+      },
+    }));
+  };
+  const update5542Rule = (index: number, field: string, value: string | number) => {
+    const next = rules5542.map((r: any, i: number) => (i === index ? { ...r, [field]: value } : r));
+    setFormData((prev) => ({ ...prev, fees: { ...prev.fees, mcc_5542_rules: next } }));
+  };
+  const remove5542Rule = (index: number) => {
+    const next = rules5542.filter((_: any, i: number) => i !== index);
+    setFormData((prev) => ({ ...prev, fees: { ...prev.fees, mcc_5542_rules: next } }));
   };
 
   if (isLoading) {
@@ -197,7 +228,62 @@ export function RtgsSettings() {
               <NumInput label="الحد الأقصى للمبلغ (MCC خاص)" value={formData.fees.mcc_special_max_amount} onChange={(v) => updateField('fees', 'mcc_special_max_amount', v)} />
               <NumInput label="نسبة MCC 5542 قبل التاريخ" value={formData.fees.mcc_5542_rate} onChange={(v) => updateField('fees', 'mcc_5542_rate', v)} step={0.001} hint="مثلاً 0.007 = 0.7%" />
               <NumInput label="الحد الأقصى للعمولة (MCC 5542)" value={formData.fees.mcc_5542_max_fee} onChange={(v) => updateField('fees', 'mcc_5542_max_fee', v)} />
-              <NumInput label="الحد الأقصى للمبلغ (MCC 5542)" value={formData.fees.mcc_5542_max_amount} onChange={(v) => updateField('fees', 'mcc_5542_max_amount', v)} />
+              <NumInput label="الحد الأقصى للمبلغ (MCC 5542) قبل التاريخ" value={formData.fees.mcc_5542_max_amount} onChange={(v) => updateField('fees', 'mcc_5542_max_amount', v)} hint="قبل تاريخ حد 5542 أدناه" />
+              <div>
+                <label className="block text-sm font-semibold mb-1">من تاريخ تسوية (حد 5542)</label>
+                <input type="date" value={formData.fees.mcc_5542_max_amount_date_from ?? '2025-02-02'} onChange={(e) => updateField('fees', 'mcc_5542_max_amount_date_from', e.target.value)} className="ds-input w-full py-2 px-3 rounded-lg text-sm" dir="ltr" />
+                <p className="text-xs mt-0.5 m-0" style={{ color: 'var(--text-muted)' }}>من هذا التاريخ يُستخدم الحد التالي لـ MCC 5542</p>
+              </div>
+              <NumInput label="الحد الأقصى للمبلغ (MCC 5542) بعد التاريخ" value={formData.fees.mcc_5542_max_amount_after_date ?? 2000000} onChange={(v) => updateField('fees', 'mcc_5542_max_amount_after_date', v)} hint="من تاريخ 2-2-2025 = 2000000" />
+
+              <div className="col-span-full mt-2 pt-4 border-t border-slate-200">
+                <p className="text-sm font-bold mb-2" style={{ color: 'var(--text-strong)' }}>قواعد MCC 5542 حسب التاريخ (ذكية)</p>
+                <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>إذا أضفت قواعد هنا تُستخدم بدل الحقلين أعلاه. كل قاعدة تُطبَّق من تاريخها فما بعد — مناسب لتغييرات مستقبلية متعددة.</p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border border-slate-200 rounded-lg overflow-hidden">
+                    <thead>
+                      <tr className="bg-slate-100">
+                        <th className="text-right py-2 px-2">من تاريخ</th>
+                        <th className="text-right py-2 px-2">حد المبلغ</th>
+                        <th className="text-right py-2 px-2">حد العمولة</th>
+                        <th className="text-right py-2 px-2">نسبة</th>
+                        {canEdit && <th className="w-10" />}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rules5542.map((r: any, i: number) => (
+                        <tr key={i} className="border-t border-slate-100">
+                          <td className="py-1 px-2">
+                            <input type="date" value={r.date_from || ''} onChange={(e) => update5542Rule(i, 'date_from', e.target.value)} className="ds-input py-1.5 px-2 rounded text-sm w-full" dir="ltr" />
+                          </td>
+                          <td className="py-1 px-2">
+                            <input type="number" value={r.max_amount ?? ''} onChange={(e) => update5542Rule(i, 'max_amount', parseFloat(e.target.value) || 0)} className="ds-input py-1.5 px-2 rounded text-sm w-full" dir="ltr" />
+                          </td>
+                          <td className="py-1 px-2">
+                            <input type="number" value={r.max_fee ?? ''} onChange={(e) => update5542Rule(i, 'max_fee', parseFloat(e.target.value) || 0)} className="ds-input py-1.5 px-2 rounded text-sm w-full" dir="ltr" />
+                          </td>
+                          <td className="py-1 px-2">
+                            <input type="number" step={0.001} value={r.rate ?? ''} onChange={(e) => update5542Rule(i, 'rate', parseFloat(e.target.value) || 0)} className="ds-input py-1.5 px-2 rounded text-sm w-full" dir="ltr" />
+                          </td>
+                          {canEdit && (
+                            <td className="py-1 px-2">
+                              <button type="button" onClick={() => remove5542Rule(i)} className="p-1.5 rounded text-red-600 hover:bg-red-50" title="حذف">
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {canEdit && (
+                  <button type="button" onClick={add5542Rule} className="mt-2 flex items-center gap-2 text-sm font-medium rounded-lg py-2 px-3 border-2 border-dashed" style={{ borderColor: 'var(--primary-600)', color: 'var(--primary-600)' }}>
+                    <Plus className="h-4 w-4" /> إضافة قاعدة (تاريخ جديد)
+                  </button>
+                )}
+              </div>
+
               <NumInput label="النسبة الافتراضية" value={formData.fees.default_rate} onChange={(v) => updateField('fees', 'default_rate', v)} step={0.001} hint="مثلاً 0.01 = 1%" />
               <NumInput label="الحد الأقصى للعمولة (افتراضي)" value={formData.fees.default_max_fee} onChange={(v) => updateField('fees', 'default_max_fee', v)} />
               <NumInput label="الحد الأقصى للمبلغ (افتراضي)" value={formData.fees.default_max_amount} onChange={(v) => updateField('fees', 'default_max_amount', v)} />

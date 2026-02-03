@@ -2,6 +2,7 @@ const pool = require('../config/database');
 const { toBaghdadTime, getTodayBaghdad, combineDateAndTimeBaghdadToUTC } = require('../utils/timezone');
 const { auditLog } = require('../middleware/auth');
 const { runGenerateDailyTasks } = require('../services/dailyTaskGenerator');
+const { getRtgsConfig, buildFeeExpr } = require('../utils/rtgsCalculation');
 const moment = require('moment-timezone');
 
 // الحصول على المهام اليومية
@@ -219,22 +220,14 @@ const createAdHocTask = async (req, res) => {
   }
 };
 
-// مساعد: جلب مجموع STTLE لتسوية (تاريخ + مصرف) لمطابقة مهام التسوية الحكومية
-const FEE_EXPR = `(CASE
-  WHEN COALESCE(r.amount, 0) < 5000 THEN 0
-  WHEN COALESCE(r.mcc, 0)::int = 5542 AND r.sttl_date >= '2026-01-01' THEN
-    CASE WHEN COALESCE(r.amount, 0) > 1428571 THEN 10000 ELSE ROUND((ABS(COALESCE(r.amount, 0)) * 0.005)::numeric, 2) END
-  WHEN COALESCE(r.mcc, 0)::int = 5542 THEN
-    CASE WHEN COALESCE(r.amount, 0) > 1428571 THEN 10000 ELSE ROUND((ABS(COALESCE(r.amount, 0)) * 0.007)::numeric, 2) END
-  ELSE
-    CASE WHEN COALESCE(r.amount, 0) > 1000000 THEN 10000 ELSE ROUND((ABS(COALESCE(r.amount, 0)) * 0.01)::numeric, 2) END
-END)`;
-
+// مساعد: جلب مجموع STTLE لتسوية (تاريخ + مصرف) لمطابقة مهام التسوية الحكومية — يستخدم إعدادات RTGS (حد 5542 حسب التاريخ)
 async function getGovernmentSettlementSumSttle(poolClient, sttlDate, bankDisplayName) {
   const dateStr = String(sttlDate).slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  const rtgsCfg = await getRtgsConfig();
+  const feeExpr = buildFeeExpr(rtgsCfg);
   const result = await poolClient.query(
-    `SELECT COALESCE(SUM(r.amount - ${FEE_EXPR}), 0) AS sum_sttle
+    `SELECT COALESCE(SUM(r.amount - ${feeExpr}), 0) AS sum_sttle
      FROM rtgs r
      LEFT JOIN settlement_maps sm ON sm.inst_id = r.inst_id2
      WHERE r.sttl_date = $1 AND COALESCE(sm.display_name_ar, r.inst_id2, '') = $2`,
