@@ -125,9 +125,11 @@ const Merchants = () => {
       setPagination(response.data?.pagination || { page: 1, limit: 50, total: 0, totalPages: 0 });
     } catch (error) {
       console.error('Error fetching merchants:', error);
+      const msg = error.response?.data?.error || error.response?.data?.details || error.message || 'خطأ في جلب التجار';
+      const hint = !error.response ? ' (تحقق من الاتصال أو أعد تحميل الصفحة بعد ثوانٍ إن كانت الخدمة تستيقظ)' : '';
       toast({
         title: 'خطأ',
-        description: error.response?.data?.error || 'خطأ في جلب التجار',
+        description: msg + hint,
         variant: 'destructive'
       });
       setMerchants([]);
