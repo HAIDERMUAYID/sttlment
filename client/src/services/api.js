@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL ||
-  (process.env.NODE_ENV === 'development' ? '/api' : 'http://localhost:5000/api');
+// في الإنتاج نستخدم نفس الدومين (/api). لا نستخدم localhost إلا في التطوير مع proxy
+const API_URL = process.env.REACT_APP_API_URL || '/api';
 
 const api = axios.create({
   baseURL: API_URL,

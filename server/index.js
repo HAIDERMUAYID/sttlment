@@ -19,13 +19,15 @@ const server = http.createServer(app);
 // Trust proxy (لإصلاح مشكلة express-rate-limit)
 app.set('trust proxy', true);
 
-// Security middleware
+// Security middleware — السماح بخطوط Google واتصال نفس الدومين ونصوص مضمنة (React)
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
+      connectSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "https:"],
     },
   },
