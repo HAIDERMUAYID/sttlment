@@ -153,28 +153,45 @@ export function GovernmentSettlements() {
   }, [todayStr, yesterdayStr, initializedFromSettings]);
 
   const fetchData = async () => {
+    const query: Record<string, string> = {
+      page: String(pagination.page),
+      limit: String(pagination.limit),
+    };
+    if (filters.sttl_date_from) query.sttl_date_from = filters.sttl_date_from;
+    if (filters.sttl_date_to) query.sttl_date_to = filters.sttl_date_to;
+    if (filters.bank_display_name) query.bank_display_name = filters.bank_display_name;
+    const params = new URLSearchParams(query);
+    const url = `/rtgs/government-settlements-by-transaction-date?${params.toString()}`;
+    const maxAttempts = 3;
+    let lastError: unknown;
     try {
       setLoading(true);
-      const query: Record<string, string> = {
-        page: String(pagination.page),
-        limit: String(pagination.limit),
-      };
-      if (filters.sttl_date_from) query.sttl_date_from = filters.sttl_date_from;
-      if (filters.sttl_date_to) query.sttl_date_to = filters.sttl_date_to;
-      if (filters.bank_display_name) query.bank_display_name = filters.bank_display_name;
-      const params = new URLSearchParams(query);
-      const res = await api.get(`/rtgs/government-settlements-by-transaction-date?${params.toString()}`);
-      setData(res.data?.data ?? []);
-      setSummary(res.data?.summary ?? { total_settlements: 0, total_movements: 0, total_amount: 0, total_fees: 0, total_acq: 0, total_sttle: 0 });
-      setPagination((prev) => ({
-        ...prev,
-        ...(res.data?.pagination ?? {}),
-      }));
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const res = await api.get(url);
+          setData(res.data?.data ?? []);
+          setSummary(res.data?.summary ?? { total_settlements: 0, total_movements: 0, total_amount: 0, total_fees: 0, total_acq: 0, total_sttle: 0 });
+          setPagination((prev) => ({
+            ...prev,
+            ...(res.data?.pagination ?? {}),
+          }));
+          return;
+        } catch (e) {
+          lastError = e;
+          if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 800 * attempt));
+        }
+      }
+      throw lastError;
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { error?: string } } };
+      const err = e as { response?: { data?: { error?: string; detail?: string } } };
+      const serverError = err.response?.data?.error;
+      const detail = err.response?.data?.detail;
+      const description = serverError
+        ? (detail ? `${serverError}: ${detail}` : serverError)
+        : 'فشل جلب التسويات الحكومية. تحقق من الاتصال أو جرّب لاحقاً.';
       toast({
         title: 'خطأ',
-        description: err.response?.data?.error ?? 'فشل جلب التسويات الحكومية',
+        description,
         variant: 'destructive',
       });
       setData([]);

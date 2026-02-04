@@ -1027,7 +1027,8 @@ async function getGovernmentSettlementsByTransactionDate(req, res) {
       return res.json({ data: [], summary: { total_settlements: 0, total_movements: 0, total_amount: 0, total_fees: 0, total_acq: 0, total_sttle: 0 }, pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } });
     }
     console.error('خطأ في جلب التسويات الحكومية حسب تاريخ الحركة:', error);
-    res.status(500).json({ error: 'خطأ في الخادم' });
+    const msg = (error?.message || String(error)).slice(0, 200);
+    res.status(500).json({ error: 'فشل جلب التسويات الحكومية', detail: process.env.NODE_ENV === 'development' ? msg : undefined });
   }
 }
 
