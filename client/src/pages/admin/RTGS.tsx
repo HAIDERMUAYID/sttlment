@@ -635,6 +635,7 @@ export function RTGS() {
       try {
         const res = await api.post('/rtgs/import', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 10 * 60 * 1000, // 10 دقائق لملفات كبيرة
           onUploadProgress: (ev) => {
             const pct = ev.total ? Math.round((ev.loaded / ev.total) * 100) : 0;
             updateUploadItem(item.id, { progress: Math.min(pct, 99) });
@@ -660,8 +661,8 @@ export function RTGS() {
           variant: 'default',
         });
       } catch (err: unknown) {
-        const ax = err as { response?: { data?: { error?: string } } };
-        const msg = ax.response?.data?.error ?? 'فشل رفع الملف';
+        const ax = err as { response?: { data?: { error?: string; max_rows?: number; received_rows?: number } }; message?: string };
+        const msg = ax.response?.data?.error ?? (ax.message && ax.message.includes('timeout') ? 'انتهت مهلة الطلب. الملف كبير جداً — جرّب ملفاً أصغر أو قسّمه.' : 'فشل رفع الملف');
         updateUploadItem(item.id, { status: 'error', progress: 0, error: msg });
         toast({
           title: 'خطأ في الاستيراد',

@@ -44,13 +44,11 @@ if (process.env.NODE_ENV === 'development') {
   app.use(requestLogger);
 }
 
-// Rate limiting - استثناء TV Dashboard من rate limiting
+// Rate limiting — الحل الجذري: طلبات القراءة (GET/HEAD) لا حد لها؛ فقط الكتابة (POST/PUT/DELETE/PATCH)
 app.use('/api', (req, res, next) => {
-  // TV Dashboard لا يحتاج rate limiting لأنه للعرض العام
-  // req.path سيكون مثل '/tv-dashboard' أو '/tv-dashboard/settings'
-  if (req.path === '/tv-dashboard' || req.path.startsWith('/tv-dashboard/')) {
-    return next();
-  }
+  if (req.path === '/tv-dashboard' || req.path.startsWith('/tv-dashboard/')) return next();
+  const method = (req.method || '').toUpperCase();
+  if (method === 'GET' || method === 'HEAD') return next(); // لا حد لتحميل الصفحات والبيانات
   return apiLimiter(req, res, next);
 });
 
@@ -70,6 +68,23 @@ app.use('/api/merchants', require('./routes/merchants'));
 app.use('/api/merchant-disbursements', require('./routes/merchantDisbursements'));
 app.use('/api/rtgs', require('./routes/rtgs'));
 app.use('/api/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+// فحص الصحة: لمعرفة إن كانت المشكلة من السيرفر أم من قاعدة البيانات
+app.get('/api/health', async (req, res) => {
+  const out = { ok: true, server: true, database: null, message: '' };
+  try {
+    const pool = require('./config/database');
+    const start = Date.now();
+    await pool.query('SELECT 1');
+    out.database = true;
+    out.dbLatencyMs = Date.now() - start;
+  } catch (err) {
+    out.ok = false;
+    out.database = false;
+    out.message = err.message || String(err);
+  }
+  res.status(out.ok ? 200 : 503).json(out);
+});
 
 // Serve static files from React app in production
 if (process.env.NODE_ENV === 'production') {

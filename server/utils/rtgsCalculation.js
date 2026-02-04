@@ -21,8 +21,8 @@ const DEFAULT_CONFIG = {
     mcc_5542_rate: 0.007,
     mcc_5542_max_fee: 10000,
     mcc_5542_max_amount: 1428571,
-    /** من تاريخ تسوية 2-2-2025 يصبح حد المبلغ لـ MCC 5542 = 2000000؛ قبله يبقى 1428572 */
-    mcc_5542_max_amount_date_from: '2025-02-02',
+    /** من تاريخ تسوية 2026-02-02 يصبح حد المبلغ لـ MCC 5542 = 2000000 (العمولة 10000 إذا المبلغ >= الحد)؛ قبله يبقى 1428572 */
+    mcc_5542_max_amount_date_from: '2026-02-02',
     mcc_5542_max_amount_after_date: 2000000,
     /** قواعد متعددة التواريخ لـ MCC 5542 — إن وُجدت تُستخدم بدل الحقلين أعلاه؛ كل قاعدة: date_from, max_amount, max_fee, rate */
     mcc_5542_rules: [],
@@ -84,7 +84,7 @@ function buildFeeExpr(config) {
   const rate2 = Number(f.mcc_5542_rate) ?? 0.007;
   const maxFee2 = Number(f.mcc_5542_max_fee) ?? 10000;
   const maxAmt2 = Number(f.mcc_5542_max_amount) ?? 1428571;
-  const date5542From = (f.mcc_5542_max_amount_date_from || '2025-02-02').toString().slice(0, 10);
+  const date5542From = (f.mcc_5542_max_amount_date_from || '2026-02-02').toString().slice(0, 10);
   const maxAmt2After = Number(f.mcc_5542_max_amount_after_date) ?? 2000000;
   const rateDef = Number(f.default_rate) ?? 0.01;
   const maxFeeDef = Number(f.default_max_fee) ?? 10000;
@@ -94,27 +94,28 @@ function buildFeeExpr(config) {
   const sortedRules = [...rules].sort((a, b) => (b.date_from || '').localeCompare(a.date_from || ''));
 
   let mcc5542Branch;
+  /* العمولة = الحد الأقصى (مثلاً 10000) عندما المبلغ >= حد المبلغ؛ الاعتماد على تاريخ التسوية sttl_date فقط لـ MCC 5542 */
   if (sortedRules.length > 0) {
     const whens = sortedRules.map((r) => {
       const d = (r.date_from || '').toString().slice(0, 10);
       const amt = Number(r.max_amount) ?? 1428571;
       const fee = Number(r.max_fee) ?? 10000;
       const rate = Number(r.rate) ?? 0.007;
-      return `WHEN r.sttl_date >= '${d}' THEN (CASE WHEN COALESCE(r.amount, 0) > ${amt} THEN ${fee} ELSE ROUND((ABS(COALESCE(r.amount, 0)) * ${rate})::numeric, ${prec}) END)`;
+      return `WHEN r.sttl_date >= '${d}' THEN (CASE WHEN COALESCE(r.amount, 0) >= ${amt} THEN ${fee} ELSE ROUND((ABS(COALESCE(r.amount, 0)) * ${rate})::numeric, ${prec}) END)`;
     });
-    mcc5542Branch = `CASE ${whens.join(' ')} ELSE (CASE WHEN COALESCE(r.amount, 0) > ${maxAmt2} THEN ${maxFee2} ELSE ROUND((ABS(COALESCE(r.amount, 0)) * ${rate2})::numeric, ${prec}) END) END`;
+    mcc5542Branch = `CASE ${whens.join(' ')} ELSE (CASE WHEN COALESCE(r.amount, 0) >= ${maxAmt2} THEN ${maxFee2} ELSE ROUND((ABS(COALESCE(r.amount, 0)) * ${rate2})::numeric, ${prec}) END) END`;
   } else {
-    mcc5542Branch = `CASE WHEN r.sttl_date >= '${date5542From}' THEN (CASE WHEN COALESCE(r.amount, 0) > ${maxAmt2After} THEN ${maxFee2} ELSE ROUND((ABS(COALESCE(r.amount, 0)) * ${rate2})::numeric, ${prec}) END)
-           ELSE (CASE WHEN COALESCE(r.amount, 0) > ${maxAmt2} THEN ${maxFee2} ELSE ROUND((ABS(COALESCE(r.amount, 0)) * ${rate2})::numeric, ${prec}) END) END`;
+    mcc5542Branch = `CASE WHEN r.sttl_date >= '${date5542From}' THEN (CASE WHEN COALESCE(r.amount, 0) >= ${maxAmt2After} THEN ${maxFee2} ELSE ROUND((ABS(COALESCE(r.amount, 0)) * ${rate2})::numeric, ${prec}) END)
+           ELSE (CASE WHEN COALESCE(r.amount, 0) >= ${maxAmt2} THEN ${maxFee2} ELSE ROUND((ABS(COALESCE(r.amount, 0)) * ${rate2})::numeric, ${prec}) END) END`;
   }
 
   return `(CASE
     WHEN COALESCE(r.amount, 0) < ${minAmt} THEN 0
     WHEN COALESCE(r.mcc, 0)::int = ${mcc} AND r.sttl_date >= '${dateFrom}' THEN
-      CASE WHEN COALESCE(r.amount, 0) > ${maxAmt1} THEN ${maxFee1} ELSE ROUND((ABS(COALESCE(r.amount, 0)) * ${rate1})::numeric, ${prec}) END
+      CASE WHEN COALESCE(r.amount, 0) >= ${maxAmt1} THEN ${maxFee1} ELSE ROUND((ABS(COALESCE(r.amount, 0)) * ${rate1})::numeric, ${prec}) END
     WHEN COALESCE(r.mcc, 0)::int = ${mcc} THEN ${mcc5542Branch}
     ELSE
-      CASE WHEN COALESCE(r.amount, 0) > ${maxAmtDef} THEN ${maxFeeDef} ELSE ROUND((ABS(COALESCE(r.amount, 0)) * ${rateDef})::numeric, ${prec}) END
+      CASE WHEN COALESCE(r.amount, 0) >= ${maxAmtDef} THEN ${maxFeeDef} ELSE ROUND((ABS(COALESCE(r.amount, 0)) * ${rateDef})::numeric, ${prec}) END
   END)`;
 }
 
@@ -141,7 +142,7 @@ function computeFees(row, amount, config) {
     const maxAmt = Number(f.mcc_special_max_amount) ?? 1428571;
     const maxFee = Number(f.mcc_special_max_fee) ?? 10000;
     const rate = Number(f.mcc_special_rate) ?? 0.005;
-    if (amountNum > maxAmt) fee = maxFee;
+    if (amountNum >= maxAmt) fee = maxFee;
     else fee = absAmount * rate;
   } else if (mcc === mccSpecial) {
     const rules = Array.isArray(f.mcc_5542_rules) ? f.mcc_5542_rules.filter((r) => r && r.date_from) : [];
@@ -157,17 +158,17 @@ function computeFees(row, amount, config) {
         rate = Number(applied.rate) ?? rate;
       }
     } else {
-      const date5542From = new Date((f.mcc_5542_max_amount_date_from || '2025-02-02').toString().slice(0, 10));
+      const date5542From = new Date((f.mcc_5542_max_amount_date_from || '2026-02-02').toString().slice(0, 10));
       const useHigherMax = sttlDateObj && sttlDateObj >= date5542From;
       if (useHigherMax) maxAmt = Number(f.mcc_5542_max_amount_after_date) ?? 2000000;
     }
-    if (amountNum > maxAmt) fee = maxFee;
+    if (amountNum >= maxAmt) fee = maxFee;
     else fee = absAmount * rate;
   } else {
     const maxAmt = Number(f.default_max_amount) ?? 1000000;
     const maxFee = Number(f.default_max_fee) ?? 10000;
     const rate = Number(f.default_rate) ?? 0.01;
-    if (amountNum > maxAmt) fee = maxFee;
+    if (amountNum >= maxAmt) fee = maxFee;
     else fee = absAmount * rate;
   }
   const prec = Number(f.precision_decimals) || 6;

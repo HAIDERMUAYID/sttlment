@@ -3,6 +3,10 @@ const crypto = require('crypto');
 const rtgsCalc = require('../utils/rtgsCalculation');
 
 const BATCH_SIZE = 2000;
+/** حد أقصى لصفوف الاستيراد في طلب واحد — لتجنب انتهاء المهلة أو استهلاك الذاكرة */
+const MAX_IMPORT_ROWS = 150000;
+/** مهلة طلب الاستيراد (بالمللي ثانية) — لملفات كبيرة */
+const IMPORT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000; // 10 دقائق
 
 /** هل الخطأ بسبب عدم وجود الجدول (لم تُنفَّذ الهجرة بعد) */
 function isTableMissingError(err) {
@@ -530,6 +534,9 @@ async function deleteAllRtgs(req, res) {
 
 async function importRtgs(req, res) {
   try {
+    req.setTimeout(IMPORT_REQUEST_TIMEOUT_MS);
+    res.setTimeout(IMPORT_REQUEST_TIMEOUT_MS);
+
     if (!req.file || !req.file.buffer) {
       return res.status(400).json({ error: 'لم يتم رفع ملف CSV' });
     }
@@ -565,6 +572,14 @@ async function importRtgs(req, res) {
 
     const headers = rows[0].map((h) => (h || '').trim());
     const dataRows = rows.slice(1);
+
+    if (dataRows.length > MAX_IMPORT_ROWS) {
+      return res.status(400).json({
+        error: `الملف كبير جداً (${dataRows.length} صف). الحد الأقصى ${MAX_IMPORT_ROWS.toLocaleString('ar-EG')} صف في طلب واحد. قسّم الملف إلى أجزاء أصغر أو استورد على دفعات.`,
+        max_rows: MAX_IMPORT_ROWS,
+        received_rows: dataRows.length,
+      });
+    }
     let inserted = 0;
     let skipped = 0;
     let rejected = 0;

@@ -18,14 +18,23 @@ export function Providers({ children }: { children: React.ReactNode }) {
   }, [theme, setTheme]);
 
   useEffect(() => {
-    if (token && localStorage.getItem('token')) {
+    if (!token || !localStorage.getItem('token')) return;
+    let cancelled = false;
+    const verify = (attempt = 0) => {
       api.get('/auth/verify')
         .then((res) => {
+          if (cancelled) return;
           const u = res.data?.user;
           if (u) updateUser(u);
         })
-        .catch(() => {});
-    }
+        .catch((err) => {
+          if (cancelled) return;
+          const isNetwork = !err?.response;
+          if (isNetwork && attempt < 2) setTimeout(() => verify(attempt + 1), 4000);
+        });
+    };
+    verify();
+    return () => { cancelled = true; };
   }, [token, updateUser]);
 
   return (

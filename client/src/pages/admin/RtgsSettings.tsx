@@ -19,7 +19,7 @@ const defaultSettings = {
     mcc_5542_rate: 0.007,
     mcc_5542_max_fee: 10000,
     mcc_5542_max_amount: 1428571,
-    mcc_5542_max_amount_date_from: '2025-02-02',
+    mcc_5542_max_amount_date_from: '2026-02-02',
     mcc_5542_max_amount_after_date: 2000000,
     mcc_5542_rules: [] as { date_from: string; max_amount: number; max_fee: number; rate: number }[],
     default_rate: 0.01,
@@ -101,7 +101,7 @@ export function RtgsSettings() {
       ...prev,
       fees: {
         ...prev.fees,
-        mcc_5542_rules: [...rules5542, { date_from: '2025-02-02', max_amount: 2000000, max_fee: 10000, rate: 0.007 }],
+        mcc_5542_rules: [...rules5542, { date_from: '2026-02-02', max_amount: 2000000, max_fee: 10000, rate: 0.007 }],
       },
     }));
   };
@@ -231,7 +231,7 @@ export function RtgsSettings() {
               <NumInput label="الحد الأقصى للمبلغ (MCC 5542) قبل التاريخ" value={formData.fees.mcc_5542_max_amount} onChange={(v) => updateField('fees', 'mcc_5542_max_amount', v)} hint="قبل تاريخ حد 5542 أدناه" />
               <div>
                 <label className="block text-sm font-semibold mb-1">من تاريخ تسوية (حد 5542)</label>
-                <input type="date" value={formData.fees.mcc_5542_max_amount_date_from ?? '2025-02-02'} onChange={(e) => updateField('fees', 'mcc_5542_max_amount_date_from', e.target.value)} className="ds-input w-full py-2 px-3 rounded-lg text-sm" dir="ltr" />
+                <input type="date" value={formData.fees.mcc_5542_max_amount_date_from ?? '2026-02-02'} onChange={(e) => updateField('fees', 'mcc_5542_max_amount_date_from', e.target.value)} className="ds-input w-full py-2 px-3 rounded-lg text-sm" dir="ltr" />
                 <p className="text-xs mt-0.5 m-0" style={{ color: 'var(--text-muted)' }}>من هذا التاريخ يُستخدم الحد التالي لـ MCC 5542</p>
               </div>
               <NumInput label="الحد الأقصى للمبلغ (MCC 5542) بعد التاريخ" value={formData.fees.mcc_5542_max_amount_after_date ?? 2000000} onChange={(v) => updateField('fees', 'mcc_5542_max_amount_after_date', v)} hint="من تاريخ 2-2-2025 = 2000000" />

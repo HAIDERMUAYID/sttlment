@@ -1,13 +1,16 @@
 const rateLimit = require('express-rate-limit');
 
-// General API rate limiter
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+/** الحل الجذري: طلبات القراءة (GET) لا تُحسب في الحد — فقط طلبات الكتابة (POST/PUT/DELETE/PATCH) */
+const apiWriteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300, // 300 عملية كتابة لكل 15 دقيقة لكل IP — المستخدم العادي لا يصل لها
   message: 'تم تجاوز الحد المسموح من الطلبات. يرجى المحاولة لاحقاً.',
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+// للتوافق مع الكود الحالي — يُستخدم فقط لطلبات الكتابة
+const apiLimiter = apiWriteLimiter;
 
 // Strict rate limiter for auth endpoints
 const authLimiter = rateLimit({
