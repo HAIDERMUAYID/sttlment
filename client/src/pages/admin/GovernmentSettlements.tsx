@@ -33,6 +33,9 @@ import {
   Table2,
   Eye,
   Download,
+  Printer,
+  FileDown,
+  RefreshCw,
 } from 'lucide-react';
 
 interface SettlementByTranDateRow {
@@ -119,7 +122,9 @@ export function GovernmentSettlements() {
   const [detailGroup, setDetailGroup] = useState<ReturnType<typeof groupBySettlement>[number] | null>(null);
   const [detailViewMode, setDetailViewMode] = useState<'table' | 'cards'>('table');
   const [downloadingImage, setDownloadingImage] = useState(false);
+  const [backfillLoading, setBackfillLoading] = useState(false);
   const detailContentRef = useRef<HTMLDivElement>(null);
+  const printAreaRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -218,6 +223,90 @@ export function GovernmentSettlements() {
 
   const groups = useMemo(() => groupBySettlement(data), [data]);
 
+  const handleBackfill = async () => {
+    setBackfillLoading(true);
+    try {
+      const res = await api.post('/rtgs/backfill-gov-settlements');
+      toast({
+        title: 'تمت التعبئة',
+        description: res.data?.message || `تم تعبئة ${res.data?.total_rows ?? 0} صفاً من ${res.data?.sources ?? 0} مصدر`,
+      });
+      fetchData();
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      toast({
+        title: 'خطأ',
+        description: err.response?.data?.error ?? 'فشل تعبئة جدول التسويات',
+        variant: 'destructive',
+      });
+    } finally {
+      setBackfillLoading(false);
+    }
+  };
+
+  const handleExport = () => {
+    if (data.length === 0) {
+      toast({ title: 'لا يوجد بيانات', description: 'لا توجد صفوف للتصدير', variant: 'destructive' });
+      return;
+    }
+    const headers = ['تاريخ التسوية', 'المصرف', 'تاريخ الحركة', 'عدد الحركات', 'قيمة الحركات (IQD)', 'قيمة العمولة (IQD)', 'عمولة المحصل (IQD)', 'قيمة التسوية (IQD)'];
+    const rows = data.map((r) => [
+      formatDate(r.sttl_date),
+      r.bank_name ?? r.inst_id2 ?? '—',
+      formatDate(r.transaction_date),
+      String(r.movement_count),
+      formatNum(r.sum_amount),
+      formatNum(r.sum_fees),
+      formatNum(r.sum_acq),
+      formatNum(r.sum_sttle),
+    ]);
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `تسويات_حكومية_${filters.sttl_date_from || 'كل'}_${filters.sttl_date_to || 'التواريخ'}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    toast({ title: 'تم التصدير', description: 'تم تحميل ملف CSV' });
+  };
+
+  const handlePrint = () => {
+    if (printAreaRef.current) {
+      const printContent = printAreaRef.current.innerHTML;
+      const win = window.open('', '_blank', 'noopener,noreferrer');
+      if (!win) {
+        window.print();
+        return;
+      }
+      win.document.write(`
+        <!DOCTYPE html><html dir="rtl" lang="ar"><head>
+        <meta charset="utf-8"><title>التسويات الحكومية</title>
+        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+        <style>
+          body { font-family: 'Cairo', sans-serif; margin: 0; padding: 24px; color: #0f172a; background: #fff; line-height: 1.5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .no-print { display: none !important; }
+          table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+          th, td { padding: 10px 12px; text-align: right; border: 1px solid #e2e8f0; }
+          th { background: linear-gradient(135deg, #026174 0%, #068294 100%); color: #fff; font-weight: 700; }
+          tr:nth-child(even) { background: #f8fafc; }
+          .print-header { background: linear-gradient(135deg, #026174 0%, #068294 100%); color: #fff; padding: 20px; border-radius: 12px; margin-bottom: 24px; }
+          .print-header h1 { margin: 0 0 8px 0; font-size: 1.5rem; }
+          .print-header p { margin: 0; opacity: 0.95; font-size: 0.9rem; }
+        </style></head><body>
+        <div class="print-header">
+          <h1>التسويات الحكومية</h1>
+          <p>من ${formatDate(filters.sttl_date_from) || '—'} إلى ${formatDate(filters.sttl_date_to) || '—'} ${filters.bank_display_name ? ` | المصرف: ${filters.bank_display_name}` : ''}</p>
+        </div>
+        ${printContent}
+        </body></html>`);
+      win.document.close();
+      win.focus();
+      setTimeout(() => { win.print(); win.onafterprint = () => win.close(); }, 400);
+    } else {
+      window.print();
+    }
+  };
+
   const handleDownloadAsImage = async () => {
     if (!detailContentRef.current || !detailGroup) return;
     setDownloadingImage(true);
@@ -284,16 +373,47 @@ export function GovernmentSettlements() {
                 جدول
               </button>
             </div>
+            <div className="flex items-center gap-2 flex-wrap no-print">
+              <button
+                type="button"
+                onClick={handleBackfill}
+                disabled={backfillLoading}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm font-medium bg-white/15 hover:bg-white/25 text-white border border-white/30 transition-colors disabled:opacity-60"
+                title="تعبئة جدول المخزون من بيانات RTGS الحالية"
+              >
+                <RefreshCw className={`w-4 h-4 ${backfillLoading ? 'animate-spin' : ''}`} />
+                {backfillLoading ? 'جاري التعبئة...' : 'تعبئة الجدول'}
+              </button>
+              <button
+                type="button"
+                onClick={handleExport}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm font-medium bg-white/15 hover:bg-white/25 text-white border border-white/30 transition-colors"
+                title="تصدير البيانات الحالية إلى CSV"
+              >
+                <FileDown className="w-4 h-4" />
+                تصدير
+              </button>
+              <button
+                type="button"
+                onClick={handlePrint}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm font-medium bg-white/15 hover:bg-white/25 text-white border border-white/30 transition-colors"
+                title="طباعة التقرير"
+              >
+                <Printer className="w-4 h-4" />
+                طباعة
+              </button>
+            </div>
             <Link
               to="/rtgs"
               className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium bg-white text-[#026174] hover:bg-white/95 transition-colors shadow"
             >
-            <ArrowRight className="w-4 h-4" />
+              <ArrowRight className="w-4 h-4" />
               العودة إلى RTGS
             </Link>
           </div>
         </div>
 
+        <div ref={printAreaRef}>
         <KpiCards
           items={[
             { label: 'عدد التسويات', value: summary.total_settlements, Icon: Hash, color: '#068294', glow: 'rgba(6, 130, 148, 0.4)', gradient: 'linear-gradient(135deg, #068294 0%, #026174 100%)' },
@@ -305,9 +425,9 @@ export function GovernmentSettlements() {
           ]}
         />
 
-        {/* Filters */}
+        {/* Filters — محسّنة */}
         <div
-          className="rounded-2xl p-5 mb-6 border border-slate-200/80"
+          className="rounded-2xl p-5 mb-6 border border-slate-200/80 no-print"
           style={{
             background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
             boxShadow: '0 4px 20px rgba(0,0,0,0.06)',
@@ -330,7 +450,7 @@ export function GovernmentSettlements() {
               إلغاء الفلاتر
             </button>
           </div>
-          <div className="flex flex-wrap items-end gap-3 mb-4 pb-4" style={{ borderBottom: '1px solid var(--border)' }}>
+          <div className="flex flex-wrap items-center gap-3 mb-4">
             <span className="text-xs font-medium text-slate-500">عرض سريع:</span>
             <button
               type="button"
@@ -357,7 +477,7 @@ export function GovernmentSettlements() {
               كل التواريخ
             </button>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1">من تاريخ التسوية</label>
               <div className="relative">
@@ -366,7 +486,7 @@ export function GovernmentSettlements() {
                   type="date"
                   value={filters.sttl_date_from}
                   onChange={(e) => handleFilterChange('sttl_date_from', e.target.value)}
-                  className="ds-input w-full pl-3 pr-10 py-2"
+                  className="ds-input w-full pl-3 pr-10 py-2 rounded-lg border border-slate-200"
                 />
               </div>
             </div>
@@ -378,11 +498,11 @@ export function GovernmentSettlements() {
                   type="date"
                   value={filters.sttl_date_to}
                   onChange={(e) => handleFilterChange('sttl_date_to', e.target.value)}
-                  className="ds-input w-full pl-3 pr-10 py-2"
+                  className="ds-input w-full pl-3 pr-10 py-2 rounded-lg border border-slate-200"
                 />
               </div>
             </div>
-            <div>
+            <div className="lg:col-span-2">
               <label className="block text-xs font-medium text-slate-500 mb-1">المصرف</label>
               <SearchableSelect
                 value={filters.bank_display_name}
@@ -394,8 +514,8 @@ export function GovernmentSettlements() {
                 searchPlaceholder="ابحث عن مصرف..."
               />
             </div>
-            <div className="flex items-end">
-              <button type="button" onClick={() => fetchData()} className="ds-btn ds-btn-primary w-full py-2 px-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => fetchData()} className="ds-btn ds-btn-primary py-2 px-5 rounded-lg flex-1 sm:flex-none">
                 تطبيق الفلاتر
               </button>
             </div>
@@ -625,6 +745,7 @@ export function GovernmentSettlements() {
               </div>
             </>
           )}
+        </div>
         </div>
 
         {/* نافذة عرض التفصيل — بحجم الشاشة */}

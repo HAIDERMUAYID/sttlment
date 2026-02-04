@@ -22,6 +22,7 @@ const {
   getCtMatchingReport,
   getRtgsSettings,
   updateRtgsSettings,
+  backfillGovSettlementSummaries,
 } = require('../controllers/rtgsController');
 const { authenticate, requirePermission } = require('../middleware/auth');
 
@@ -62,6 +63,7 @@ router.post('/match-rrn-excel', uploadExcel.single('file'), requirePermission('r
 
 router.get('/settings', requirePermission('rtgs_settings', 'view'), getRtgsSettings);
 router.put('/settings', requirePermission('rtgs_settings', 'edit'), updateRtgsSettings);
+router.post('/backfill-gov-settlements', requirePermission('rtgs', 'import'), backfillGovSettlementSummaries);
 
 router.get('/acq-fees-summary', requirePermission('ct_matching', 'view'), getAcqFeesSummary);
 router.post('/ct-records', requirePermission('ct_matching', 'create_ct'), createCtRecord);
