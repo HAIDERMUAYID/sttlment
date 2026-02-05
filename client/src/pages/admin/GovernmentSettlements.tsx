@@ -36,7 +36,23 @@ import {
   Printer,
   FileDown,
   RefreshCw,
+  FileText,
 } from 'lucide-react';
+
+/** صف تفاصيل التسوية (من API تفاصيل التسوية) */
+interface SettlementDetailRow {
+  iban: string;
+  ministry_directorate_governorate: string;
+  account_number: string;
+  branch_name: string;
+  branch_number: string;
+  movement_count: number;
+  sum_amount: number;
+  sum_fees: number;
+  sum_acq: number;
+  sum_sttle: number;
+  mer?: string;
+}
 
 interface SettlementByTranDateRow {
   sttl_date: string | null;
@@ -123,9 +139,32 @@ export function GovernmentSettlements() {
   const [detailViewMode, setDetailViewMode] = useState<'table' | 'cards'>('table');
   const [downloadingImage, setDownloadingImage] = useState(false);
   const [backfillLoading, setBackfillLoading] = useState(false);
+  const [detailsSettlement, setDetailsSettlement] = useState<{ sttl_date: string | null; bank_display_name: string | null } | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsRows, setDetailsRows] = useState<Array<{ iban: string; ministry_directorate_governorate: string; account_number: string; branch_name: string; branch_number: string; movement_count: number; sum_amount: number; sum_fees: number; sum_acq: number; sum_sttle: number }>>([]);
   const detailContentRef = useRef<HTMLDivElement>(null);
   const printAreaRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+
+  useEffect(() => {
+    if (!detailsSettlement?.sttl_date) return;
+    const sttl = typeof detailsSettlement.sttl_date === 'string' ? detailsSettlement.sttl_date.slice(0, 10) : '';
+    const bank = detailsSettlement.bank_display_name || '';
+    const params = new URLSearchParams({ sttl_date: sttl });
+    if (bank) params.set('bank_display_name', bank);
+    api.get(`/rtgs/government-settlement-details?${params.toString()}`)
+      .then((res) => {
+        setDetailsRows(res.data?.details ?? []);
+        if (!(res.data?.details?.length)) {
+          toast({ title: 'لا توجد تفاصيل', description: 'لم تُعبَّأ تفاصيل هذه التسوية. شغّل «تعبئة الجدول» ثم أعد تحميل الصفحة.', variant: 'destructive' });
+        }
+      })
+      .catch(() => {
+        toast({ title: 'خطأ', description: 'فشل جلب تفاصيل التسوية', variant: 'destructive' });
+        setDetailsRows([]);
+      })
+      .finally(() => setDetailsLoading(false));
+  }, [detailsSettlement?.sttl_date, detailsSettlement?.bank_display_name, toast]);
 
   useEffect(() => {
     api.get('/rtgs/filter-options').then((res) => {
@@ -305,6 +344,18 @@ export function GovernmentSettlements() {
     } else {
       window.print();
     }
+  };
+
+  const openSettlementDetails = (group: ReturnType<typeof groupBySettlement>[number]) => {
+    const sttlDate = group.sttl_date ? (typeof group.sttl_date === 'string' ? group.sttl_date.slice(0, 10) : '') : '';
+    const bankName = group.bank_name || group.rows[0]?.inst_id2 || '';
+    if (!sttlDate || !bankName) {
+      toast({ title: 'تنبيه', description: 'لا يمكن جلب التفاصيل بدون تاريخ تسوية ومصرف', variant: 'destructive' });
+      return;
+    }
+    setDetailsRows([]);
+    setDetailsLoading(true);
+    setDetailsSettlement({ sttl_date: sttlDate, bank_display_name: bankName });
   };
 
   const handleDownloadAsImage = async () => {
@@ -611,8 +662,8 @@ export function GovernmentSettlements() {
                               <div className="col-span-2 flex justify-between pt-1 border-t border-white/30 mt-1"><span>قيمة التسوية</span><span className="tabular-nums font-bold" dir="ltr">{formatNum(group.totals.sum_sttle)} IQD</span></div>
                             </div>
                           </div>
-                          {/* زر عرض التفصيل + ختم التسويات (الختم في الجهة اليسرى) */}
-                          <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
+                          {/* أزرار عرض التفصيل + تفاصيل التسوية (IBAN، وزارة، فرع، إلخ) */}
+                          <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
                             <button
                               type="button"
                               onClick={() => setDetailGroup(group)}
@@ -621,7 +672,15 @@ export function GovernmentSettlements() {
                               <Eye className="w-4 h-4" />
                               عرض التفصيل
                             </button>
-                            <div className="flex-shrink-0 ms-auto" style={{ alignSelf: 'flex-end' }}>
+                            <button
+                              type="button"
+                              onClick={() => openSettlementDetails(group)}
+                              className="ds-btn ds-btn-outline flex items-center gap-2 px-4 py-2 text-sm"
+                            >
+                              <FileText className="w-4 h-4" />
+                              تفاصيل التسوية
+                            </button>
+                            <div className="flex-shrink-0 ms-auto w-full sm:w-auto" style={{ alignSelf: 'flex-end' }}>
                               <img src="/stamp-settlement-reconciliation.png" alt="ختم التسويات" className="h-14 w-auto object-contain opacity-90" />
                             </div>
                           </div>
@@ -665,12 +724,20 @@ export function GovernmentSettlements() {
                       const label = `تسوية ${dateStr} — ${bankStr}`;
                       return (
                         <React.Fragment key={group.key}>
-                          {/* رأس التسوية */}
+                          {/* رأس التسوية + زر تفاصيل التسوية */}
                           <tr style={{ background: 'rgba(2, 97, 116, 0.08)', borderTop: '3px solid var(--primary-600)' }}>
                             <td colSpan={6} className="py-4 px-4">
-                              <span className="text-base font-bold" style={{ color: 'var(--text-strong)' }}>
-                                {label}
-                              </span>
+                              <div className="flex items-center justify-between gap-3 flex-wrap">
+                                <span className="text-base font-bold" style={{ color: 'var(--text-strong)' }}>{label}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => openSettlementDetails(group)}
+                                  className="ds-btn ds-btn-outline flex items-center gap-2 px-3 py-1.5 text-sm"
+                                >
+                                  <FileText className="w-4 h-4" />
+                                  تفاصيل التسوية
+                                </button>
+                              </div>
                             </td>
                           </tr>
                           {/* الحركات */}
@@ -747,6 +814,59 @@ export function GovernmentSettlements() {
           )}
         </div>
         </div>
+
+        {/* نافذة تفاصيل التسوية (IBAN، وزارة/مديرية/محافظة، فرع، حركات، عمولة، مبلغ) */}
+        <Dialog open={!!detailsSettlement} onOpenChange={(open) => { if (!open) setDetailsSettlement(null); }}>
+          <DialogContent className="max-w-[95vw] w-full max-h-[95vh] overflow-hidden flex flex-col rounded-2xl">
+            <DialogHeader className="p-6 pb-4 border-b flex-shrink-0" style={{ borderColor: 'var(--border-card)' }}>
+              <DialogTitle className="text-xl font-bold" style={{ color: 'var(--text-strong)' }}>
+                تفاصيل التسوية — {formatDate(detailsSettlement?.sttl_date ?? null)} {detailsSettlement?.bank_display_name ? ` / ${detailsSettlement.bank_display_name}` : ''}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="p-6 overflow-auto flex-1 min-h-0">
+              {detailsLoading ? (
+                <Loading message="جاري جلب التفاصيل..." />
+              ) : detailsRows.length === 0 ? (
+                <p className="text-center text-slate-500">لا توجد تفاصيل مخزنة لهذه التسوية. قم بتعبئة الجدول أو استيراد ملف RTGS.</p>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border" style={{ borderColor: 'var(--border-card)' }}>
+                  <table className="ds-table w-full text-sm" style={{ minWidth: '900px' }}>
+                    <thead>
+                      <tr className="table-header-dark" style={{ background: 'linear-gradient(135deg, #026174 0%, #068294 100%)' }}>
+                        <th className="text-end py-3 px-3 font-bold text-white">IBAN</th>
+                        <th className="text-end py-3 px-3 font-bold text-white">الوزارة / المديرية / المحافظة</th>
+                        <th className="text-end py-3 px-3 font-bold text-white">رقم الحساب</th>
+                        <th className="text-end py-3 px-3 font-bold text-white">اسم الفرع</th>
+                        <th className="text-end py-3 px-3 font-bold text-white">رقم الفرع</th>
+                        <th className="text-end py-3 px-3 font-bold text-white">عدد الحركات</th>
+                        <th className="text-end py-3 px-3 font-bold text-white">قيمة الحركات</th>
+                        <th className="text-end py-3 px-3 font-bold text-white">العمولة</th>
+                        <th className="text-end py-3 px-3 font-bold text-white">عمولة المحصل</th>
+                        <th className="text-end py-3 px-3 font-bold text-white">مبلغ التسوية</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detailsRows.map((row, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50/80">
+                          <td className="py-2 px-3 font-mono text-xs" dir="ltr">{row.iban || '—'}</td>
+                          <td className="py-2 px-3 max-w-[220px]" title={row.ministry_directorate_governorate}>{row.ministry_directorate_governorate || '—'}</td>
+                          <td className="py-2 px-3" dir="ltr">{row.account_number || '—'}</td>
+                          <td className="py-2 px-3">{row.branch_name || '—'}</td>
+                          <td className="py-2 px-3" dir="ltr">{row.branch_number || '—'}</td>
+                          <td className="py-2 px-3 tabular-nums" dir="ltr">{row.movement_count.toLocaleString('en-US')}</td>
+                          <td className="py-2 px-3 tabular-nums" dir="ltr">{formatNum(row.sum_amount)}</td>
+                          <td className="py-2 px-3 tabular-nums" dir="ltr">{formatNum(row.sum_fees)}</td>
+                          <td className="py-2 px-3 tabular-nums" dir="ltr">{formatNum(row.sum_acq)}</td>
+                          <td className="py-2 px-3 font-bold tabular-nums" dir="ltr" style={{ color: 'var(--primary-800)' }}>{formatNum(row.sum_sttle)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* نافذة عرض التفصيل — بحجم الشاشة */}
         <Dialog open={!!detailGroup} onOpenChange={(open) => { if (!open) { setDetailGroup(null); setDetailViewMode('table'); } }}>

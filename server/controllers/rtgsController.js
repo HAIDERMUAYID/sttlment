@@ -13,7 +13,7 @@ function isTableMissingError(err) {
   const code = err?.code;
   const msg = (err?.message || '').toLowerCase();
   if (msg.includes('column') && msg.includes('does not exist')) return false;
-  return code === '42P01' || msg.includes('does not exist') || msg.includes('relation "rtgs"') || msg.includes('relation "settlement_maps"') || msg.includes('relation "import_logs"') || msg.includes('relation "gov_settlement_summaries"');
+  return code === '42P01' || msg.includes('does not exist') || msg.includes('relation "rtgs"') || msg.includes('relation "settlement_maps"') || msg.includes('relation "import_logs"') || msg.includes('relation "gov_settlement_summaries"') || msg.includes('relation "gov_settlement_details"');
 }
 
 /** تعبئة جدول مخزون التسويات الحكومية لملف استيراد معيّن (يُستدعى بعد كل استيراد RTGS). يُمرَّر null للبيانات القديمة بدون import_log_id */
@@ -45,6 +45,51 @@ async function refreshGovSettlementSummariesForImport(client, importLogId) {
     );
   } catch (e) {
     if (!isTableMissingError(e)) console.error('تحديث مخزون التسويات الحكومية:', e.message);
+  }
+}
+
+/** تعبئة جدول تفاصيل التسوية (تاجر + إجماليات) لملف استيراد — يُستدعى بعد كل استيراد RTGS */
+async function refreshGovSettlementDetailsForImport(client, importLogId) {
+  try {
+    const rtgsCfg = await rtgsCalc.getRtgsConfig();
+    const feeExpr = rtgsCalc.buildFeeExpr(rtgsCfg);
+    const acqMult = rtgsCalc.buildAcqMultiplierExpr(rtgsCfg);
+    const whereClause = importLogId == null ? 'WHERE r.import_log_id IS NULL' : 'WHERE r.import_log_id = $1';
+    const params = importLogId == null ? [] : [importLogId];
+    await client.query(
+      `INSERT INTO gov_settlement_details (
+         import_log_id, sttl_date, inst_id2, bank_display_name, mer,
+         iban, ministry, directorate_name, governorate, account_number, branch_name, branch_number,
+         movement_count, sum_amount, sum_fees, sum_acq, sum_sttle
+       )
+       SELECT
+         r.import_log_id,
+         r.sttl_date,
+         r.inst_id2,
+         COALESCE(sm.display_name_ar, r.inst_id2, 'غير معرف'),
+         r.mer,
+         m.iban,
+         m.ministry,
+         m.directorate_name,
+         m.governorate,
+         m.account_number,
+         m.branch_name,
+         m.branch_number,
+         COUNT(*)::int,
+         COALESCE(SUM(r.amount), 0),
+         COALESCE(SUM(${feeExpr}), 0),
+         COALESCE(SUM(${feeExpr} * ${acqMult}), 0),
+         COALESCE(SUM(r.amount - (${feeExpr})), 0)
+       FROM rtgs r
+       LEFT JOIN settlement_maps sm ON sm.inst_id = r.inst_id2
+       LEFT JOIN merchants m ON m.merchant_id = r.mer
+       ${whereClause}
+       GROUP BY r.import_log_id, r.sttl_date, r.inst_id2, sm.display_name_ar, r.mer,
+                m.iban, m.ministry, m.directorate_name, m.governorate, m.account_number, m.branch_name, m.branch_number`,
+      params
+    );
+  } catch (e) {
+    if (!isTableMissingError(e)) console.error('تحديث تفاصيل التسوية:', e.message);
   }
 }
 
@@ -548,6 +593,9 @@ async function deleteAllRtgs(req, res) {
       try {
         await client.query('TRUNCATE gov_settlement_summaries');
       } catch (_) {}
+      try {
+        await client.query('TRUNCATE gov_settlement_details');
+      } catch (_) {}
       await client.query('DELETE FROM rtgs');
       await client.query('DELETE FROM import_logs');
       res.json({
@@ -758,6 +806,7 @@ async function importRtgs(req, res) {
           [inserted, skipped, rejected, JSON.stringify({ rejected_sample: rejectedReasons.slice(0, 20) }), durationMs, importLogId]
         );
         await refreshGovSettlementSummariesForImport(client, importLogId);
+        await refreshGovSettlementDetailsForImport(client, importLogId);
       }
     } finally {
       client.release();
@@ -1916,6 +1965,60 @@ async function updateRtgsSettings(req, res) {
   }
 }
 
+/** جلب تفاصيل التسوية (IBAN، وزارة/مديرية/محافظة، فرع، حركات، عمولة، مبلغ) لتسوية معيّنة — من جدول gov_settlement_details */
+async function getGovernmentSettlementDetails(req, res) {
+  try {
+    const { sttl_date, inst_id2, bank_display_name } = req.query;
+    if (!sttl_date || (!inst_id2 && !bank_display_name)) {
+      return res.status(400).json({ error: 'مطلوب: sttl_date و (inst_id2 أو bank_display_name)' });
+    }
+    const dateStr = String(sttl_date).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      return res.status(400).json({ error: 'تنسيق تاريخ غير صالح (yyyy-mm-dd)' });
+    }
+    const params = [dateStr];
+    let where = ' WHERE g.sttl_date = $1 ';
+    if (inst_id2) {
+      params.push(String(inst_id2).trim());
+      where += ' AND g.inst_id2 = $2 ';
+    }
+    if (bank_display_name) {
+      params.push(String(bank_display_name).trim());
+      where += (inst_id2 ? ' AND g.bank_display_name = $3 ' : ' AND g.bank_display_name = $2 ');
+    }
+    const result = await pool.query(
+      `SELECT g.iban, g.ministry, g.directorate_name, g.governorate, g.account_number, g.branch_name, g.branch_number,
+              g.movement_count, g.sum_amount, g.sum_fees, g.sum_acq, g.sum_sttle, g.mer, g.bank_display_name, g.inst_id2
+       FROM gov_settlement_details g ${where}
+       ORDER BY g.mer`,
+      params
+    );
+    const rows = (result.rows || []).map((r) => ({
+      iban: r.iban ?? '',
+      ministry: r.ministry ?? '',
+      directorate_name: r.directorate_name ?? '',
+      governorate: r.governorate ?? '',
+      ministry_directorate_governorate: [r.ministry, r.directorate_name, r.governorate].filter(Boolean).join(' / ') || '—',
+      account_number: r.account_number ?? '',
+      branch_name: r.branch_name ?? '',
+      branch_number: r.branch_number ?? '',
+      movement_count: parseInt(r.movement_count, 10) || 0,
+      sum_amount: parseFloat(r.sum_amount) || 0,
+      sum_fees: parseFloat(r.sum_fees) || 0,
+      sum_acq: parseFloat(r.sum_acq) || 0,
+      sum_sttle: parseFloat(r.sum_sttle) || 0,
+      mer: r.mer ?? '',
+      bank_display_name: r.bank_display_name ?? '',
+      inst_id2: r.inst_id2 ?? '',
+    }));
+    res.json({ sttl_date: dateStr, inst_id2: params[1] || null, bank_display_name: bank_display_name || null, details: rows });
+  } catch (e) {
+    if (isTableMissingError(e)) return res.json({ sttl_date: req.query.sttl_date?.slice(0, 10), details: [] });
+    console.error('خطأ في جلب تفاصيل التسوية:', e);
+    res.status(500).json({ error: e?.message || 'خطأ في الخادم' });
+  }
+}
+
 /** مجموع STTLE لتسوية واحدة (تاريخ + مصرف) — للمطابقة مع قيمة الموظف في مهام التسوية الحكومية */
 async function getGovernmentSettlementSum(req, res) {
   try {
@@ -1945,14 +2048,16 @@ async function getGovernmentSettlementSum(req, res) {
   }
 }
 
-/** تعبئة جدول مخزون التسويات الحكومية من بيانات RTGS الحالية (مرة واحدة بعد تفعيل الجدول أو للبيانات القديمة) */
+/** تعبئة جدول مخزون التسويات الحكومية وجدول التفاصيل من بيانات RTGS الحالية (مرة واحدة بعد تفعيل الجداول أو للبيانات القديمة) */
 async function backfillGovSettlementSummaries(req, res) {
   try {
     await pool.query('TRUNCATE gov_settlement_summaries');
+    try { await pool.query('TRUNCATE gov_settlement_details'); } catch (_) {}
     const dist = await pool.query('SELECT DISTINCT import_log_id FROM rtgs');
     const ids = (dist.rows || []).map((r) => (r.import_log_id != null ? r.import_log_id : null));
     for (const id of ids) {
       await refreshGovSettlementSummariesForImport(pool, id);
+      await refreshGovSettlementDetailsForImport(pool, id);
     }
     const countResult = await pool.query('SELECT COUNT(*) AS c FROM gov_settlement_summaries');
     const totalRows = parseInt(countResult.rows[0]?.c || '0', 10);
@@ -1983,6 +2088,7 @@ module.exports = {
   getGovernmentSettlementsDataForDate,
   getGovernmentSettlementsByTransactionDate,
   getGovernmentSettlementSum,
+  getGovernmentSettlementDetails,
   exportRtgs,
   matchRrnExcel,
   getAcqFeesSummary,

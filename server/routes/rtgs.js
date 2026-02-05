@@ -12,6 +12,7 @@ const {
   getGovernmentSettlements,
   getGovernmentSettlementsByTransactionDate,
   getGovernmentSettlementSum,
+  getGovernmentSettlementDetails,
   exportRtgs,
   matchRrnExcel,
   getAcqFeesSummary,
@@ -58,6 +59,7 @@ router.post('/import', uploadCsv.single('file'), requirePermission('rtgs', 'impo
 router.get('/government-settlements', requirePermission('government_settlements', 'view'), getGovernmentSettlements);
 router.get('/government-settlements-by-transaction-date', requirePermission('government_settlements', 'view'), getGovernmentSettlementsByTransactionDate);
 router.get('/government-settlement-sum', requirePermission('government_settlements', 'view'), getGovernmentSettlementSum);
+router.get('/government-settlement-details', requirePermission('government_settlements', 'view'), getGovernmentSettlementDetails);
 router.get('/export', requirePermission('rtgs', 'export'), exportRtgs);
 router.post('/match-rrn-excel', uploadExcel.single('file'), requirePermission('rtgs', 'view'), matchRrnExcel);
 
