@@ -569,12 +569,18 @@ const EmployeeSlide: React.FC<{ slide: any }> = ({ slide }) => {
   const daily = slide.daily || {};
   const tasks = daily.tasks || [];
   const attendance = daily.attendance || {};
+  const [avatarError, setAvatarError] = useState(false);
+  useEffect(() => setAvatarError(false), [emp?.id]);
   return (
     <div className="slide employee-slide">
       <motion.div initial={{ y: -30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="slide-header employee-header">
         <div className="employee-avatar-large">
-          {emp.avatarUrl ? (
-            <img src={`${window.location.origin}${emp.avatarUrl}`} alt={emp.name} />
+          {emp.avatarUrl && !avatarError ? (
+            <img
+              src={`${window.location.origin}${emp.avatarUrl}`}
+              alt={emp.name}
+              onError={() => setAvatarError(true)}
+            />
           ) : (
             <span>{emp.name ? emp.name.charAt(0) : '?'}</span>
           )}
@@ -636,12 +642,18 @@ const EmployeeMonthlySlide: React.FC<{ slide: any }> = ({ slide }) => {
   const monthly = slide.monthly || {};
   const categories = monthly.categories || [];
   const attendance = monthly.attendance || {};
+  const [avatarErrorMonthly, setAvatarErrorMonthly] = useState(false);
+  useEffect(() => setAvatarErrorMonthly(false), [emp?.id]);
   return (
     <div className="slide employee-monthly-slide">
       <motion.div initial={{ y: -30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="slide-header employee-header">
         <div className="employee-avatar-large">
-          {emp.avatarUrl ? (
-            <img src={`${window.location.origin}${emp.avatarUrl}`} alt={emp.name} />
+          {emp.avatarUrl && !avatarErrorMonthly ? (
+            <img
+              src={`${window.location.origin}${emp.avatarUrl}`}
+              alt={emp.name}
+              onError={() => setAvatarErrorMonthly(true)}
+            />
           ) : (
             <span>{emp.name ? emp.name.charAt(0) : '?'}</span>
           )}

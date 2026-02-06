@@ -17,6 +17,9 @@ import {
 } from 'lucide-react';
 import moment from 'moment-timezone';
 
+const BAGHDAD = 'Asia/Baghdad';
+const nowBaghdad = () => moment().tz(BAGHDAD);
+
 const monthNames = [
   'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
   'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
@@ -25,15 +28,15 @@ const monthNames = [
 const dayNames = ['أحد', 'إثنين', 'ثلاثاء', 'أربعاء', 'خميس', 'جمعة', 'سبت'];
 
 export function AttendanceV2() {
-  const [year, setYear] = useState(moment().year());
-  const [month, setMonth] = useState(moment().month() + 1);
+  const [year, setYear] = useState(nowBaghdad().year());
+  const [month, setMonth] = useState(nowBaghdad().month() + 1);
   const [employeeNameFilter, setEmployeeNameFilter] = useState('');
 
-  const start = moment().year(year).month(month - 1).startOf('month').format('YYYY-MM-DD');
-  const end = moment().year(year).month(month - 1).endOf('month').format('YYYY-MM-DD');
-  const daysInMonth = moment().year(year).month(month - 1).daysInMonth();
-  const isCurrentMonth = year === moment().year() && month === moment().month() + 1;
-  const todayDay = isCurrentMonth ? moment().date() : null;
+  const start = moment().tz(BAGHDAD).year(year).month(month - 1).startOf('month').format('YYYY-MM-DD');
+  const end = moment().tz(BAGHDAD).year(year).month(month - 1).endOf('month').format('YYYY-MM-DD');
+  const daysInMonth = moment().tz(BAGHDAD).year(year).month(month - 1).daysInMonth();
+  const isCurrentMonth = year === nowBaghdad().year() && month === nowBaghdad().month() + 1;
+  const todayDay = isCurrentMonth ? nowBaghdad().date() : null;
 
   const { data: users = [], isLoading: usersLoading } = useQuery({
     queryKey: ['users'],
@@ -74,7 +77,7 @@ export function AttendanceV2() {
   }, [users.length, attendance]);
 
   const getAttendanceFor = (userId: number, day: number) => {
-    const date = moment().year(year).month(month - 1).date(day).format('YYYY-MM-DD');
+    const date = moment().tz(BAGHDAD).year(year).month(month - 1).date(day).format('YYYY-MM-DD');
     const record = attendance.find((a: any) => {
       const recordDate = a.date ? (typeof a.date === 'string' ? a.date.slice(0, 10) : moment(a.date).format('YYYY-MM-DD')) : '';
       return a.user_id === userId && recordDate === date;
@@ -103,8 +106,8 @@ export function AttendanceV2() {
   };
 
   const goToCurrentMonth = () => {
-    setYear(moment().year());
-    setMonth(moment().month() + 1);
+    setYear(nowBaghdad().year());
+    setMonth(nowBaghdad().month() + 1);
   };
 
   const cardStyle = (accent: string) => ({

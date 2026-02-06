@@ -2,6 +2,9 @@ const pool = require('../config/database');
 const { toBaghdadTime, getTodayBaghdad, getNowBaghdad } = require('../utils/timezone');
 const { getGovernmentSettlementsDataForDate } = require('./rtgsController');
 
+/** المهمة الملغاة لا تحتسب على القسم أو الموظف — نستبعدها من العدّات */
+const EXCLUDE_CANCELLED = " AND te.result_status <> 'cancelled'";
+
 // القيم الافتراضية للشرائح المفعلة
 const DEFAULT_ENABLED_SLIDES = {
   opening: true,
@@ -106,7 +109,7 @@ const getDashboardData = async (req, res) => {
       `SELECT COUNT(*) as count
        FROM task_executions te
        JOIN daily_tasks dt ON te.daily_task_id = dt.id
-       WHERE dt.task_date = $1 AND te.result_status = 'completed_late'`,
+       WHERE dt.task_date = $1 AND te.result_status = 'completed_late'${EXCLUDE_CANCELLED}`,
       [today]
     );
     
@@ -126,7 +129,7 @@ const getDashboardData = async (req, res) => {
       `SELECT AVG(te.duration_minutes) as avg_duration
        FROM task_executions te
        JOIN daily_tasks dt ON te.daily_task_id = dt.id
-       WHERE dt.task_date = $1 AND te.duration_minutes IS NOT NULL`,
+       WHERE dt.task_date = $1 AND te.duration_minutes IS NOT NULL${EXCLUDE_CANCELLED}`,
       [today]
     );
     
@@ -307,7 +310,7 @@ const getDashboardData = async (req, res) => {
            COALESCE(SUM(te.duration_minutes), 0)::int as total_duration
          FROM task_executions te
          JOIN daily_tasks dt ON te.daily_task_id = dt.id
-         WHERE te.done_by_user_id = ANY($1::int[]) AND dt.task_date = $2
+         WHERE te.done_by_user_id = ANY($1::int[]) AND dt.task_date = $2${EXCLUDE_CANCELLED}
          GROUP BY te.done_by_user_id`,
         [empIds, todayStr]
       ),
@@ -332,7 +335,7 @@ const getDashboardData = async (req, res) => {
            COALESCE(SUM(te.duration_minutes), 0)::int as total_duration
          FROM task_executions te
          JOIN daily_tasks dt ON te.daily_task_id = dt.id
-         WHERE te.done_by_user_id = ANY($1::int[]) AND dt.task_date >= $2 AND dt.task_date <= $3
+         WHERE te.done_by_user_id = ANY($1::int[]) AND dt.task_date >= $2 AND dt.task_date <= $3${EXCLUDE_CANCELLED}
          GROUP BY te.done_by_user_id`,
         [empIds, monthStartStr, monthEndStr]
       ),
@@ -345,6 +348,7 @@ const getDashboardData = async (req, res) => {
          FROM daily_tasks dt
          LEFT JOIN LATERAL (SELECT id, result_status FROM task_executions WHERE daily_task_id = dt.id ORDER BY done_at DESC LIMIT 1) te ON true
          WHERE dt.assigned_to_user_id = ANY($1::int[]) AND dt.task_date >= $2::date AND dt.task_date <= $3::date
+           AND (te.id IS NULL OR te.result_status <> 'cancelled')
          GROUP BY dt.assigned_to_user_id`,
         [empIds, monthStartStr, monthEndStr]
       ),
@@ -359,6 +363,7 @@ const getDashboardData = async (req, res) => {
          WHERE aht.assigned_to_user_id = ANY($1::int[])
            AND (aht.created_at AT TIME ZONE 'Asia/Baghdad')::date >= $2::date
            AND (aht.created_at AT TIME ZONE 'Asia/Baghdad')::date <= $3::date
+           AND (te.id IS NULL OR te.result_status <> 'cancelled')
          GROUP BY aht.assigned_to_user_id`,
         [empIds, monthStartStr, monthEndStr]
       ),
@@ -368,7 +373,7 @@ const getDashboardData = async (req, res) => {
                   ROW_NUMBER() OVER (PARTITION BY te.done_by_user_id ORDER BY COUNT(te.id) DESC, dt.task_date DESC) as rn
            FROM task_executions te
            JOIN daily_tasks dt ON te.daily_task_id = dt.id
-           WHERE te.done_by_user_id = ANY($1::int[]) AND dt.task_date >= $2 AND dt.task_date <= $3
+           WHERE te.done_by_user_id = ANY($1::int[]) AND dt.task_date >= $2 AND dt.task_date <= $3${EXCLUDE_CANCELLED}
            GROUP BY te.done_by_user_id, dt.task_date
          ) sub WHERE rn = 1`,
         [empIds, monthStartStr, monthEndStr]
@@ -389,7 +394,7 @@ const getDashboardData = async (req, res) => {
            COUNT(CASE WHEN te.result_status = 'completed' THEN 1 END)::int as on_time
          FROM task_executions te
          JOIN daily_tasks dt ON te.daily_task_id = dt.id
-         WHERE te.done_by_user_id = ANY($1::int[]) AND dt.task_date >= $2 AND dt.task_date <= $3
+         WHERE te.done_by_user_id = ANY($1::int[]) AND dt.task_date >= $2 AND dt.task_date <= $3${EXCLUDE_CANCELLED}
          GROUP BY te.done_by_user_id`,
         [empIds, weekStart.format('YYYY-MM-DD'), weekEndStr]
       ),
@@ -731,7 +736,7 @@ const getDashboardData = async (req, res) => {
        FROM task_executions te
        JOIN daily_tasks dt ON te.daily_task_id = dt.id
        JOIN users u ON te.done_by_user_id = u.id
-       WHERE dt.task_date = $1 AND dt.assigned_to_user_id != te.done_by_user_id
+       WHERE dt.task_date = $1 AND dt.assigned_to_user_id != te.done_by_user_id${EXCLUDE_CANCELLED}
        GROUP BY u.id, u.name
        ORDER BY count DESC`,
       [today]
@@ -755,7 +760,7 @@ const getDashboardData = async (req, res) => {
          LEFT JOIN ad_hoc_tasks aht ON te.ad_hoc_task_id = aht.id
          LEFT JOIN task_templates t ON dt.template_id = t.id OR aht.template_id = t.id
          LEFT JOIN categories c ON t.category_id = c.id
-         WHERE (dt.task_date = $1 OR DATE(te.done_at AT TIME ZONE 'Asia/Baghdad') = $1)
+         WHERE (dt.task_date = $1 OR DATE(te.done_at AT TIME ZONE 'Asia/Baghdad') = $1)${EXCLUDE_CANCELLED}
          GROUP BY c.id, c.name ORDER BY count DESC`,
         [today]
       );
@@ -772,7 +777,7 @@ const getDashboardData = async (req, res) => {
          LEFT JOIN daily_tasks dt ON te.daily_task_id = dt.id
          LEFT JOIN users u ON te.done_by_user_id = u.id
          WHERE (dt.task_date = $1 OR DATE(te.done_at AT TIME ZONE 'Asia/Baghdad') = $1)
-           AND u.id IS NOT NULL
+           AND u.id IS NOT NULL${EXCLUDE_CANCELLED}
          GROUP BY u.id, u.name ORDER BY tasks DESC LIMIT 10`,
         [today]
       );
@@ -1023,6 +1028,7 @@ const getDashboardData = async (req, res) => {
             WHERE daily_task_id = dt.id ORDER BY done_at DESC LIMIT 1
           ) te ON true
           WHERE dt.task_date >= $1 AND dt.task_date <= $2
+            AND (te.result_status IS NULL OR te.result_status <> 'cancelled')
         )
         SELECT COALESCE(category_name, 'بدون فئة') as name,
                COUNT(*) as total,
@@ -1053,7 +1059,7 @@ const getDashboardData = async (req, res) => {
         `SELECT aht.id, aht.title, aht.status, aht.due_date_time, aht.created_at,
                 te.done_at, te.result_status, u.id as user_id, u.name as user_name, u.avatar_url
          FROM ad_hoc_tasks aht
-         JOIN task_executions te ON te.ad_hoc_task_id = aht.id
+         JOIN task_executions te ON te.ad_hoc_task_id = aht.id AND te.result_status <> 'cancelled'
          JOIN users u ON te.done_by_user_id = u.id
          WHERE (te.done_at AT TIME ZONE 'Asia/Baghdad')::date >= $1::date
            AND (te.done_at AT TIME ZONE 'Asia/Baghdad')::date <= $2::date

@@ -35,7 +35,8 @@ const DEFAULT_CONFIG = {
     pos_rate: 0.7,
     non_pos_rate: 0.65,
   },
-  match_tolerance: 0.0001,
+  /** هامش تطابق CT مع عمولة التحصيل (بالدينار) — فروق تقريبية أقل من هذا تُعتبر مطابقة */
+  match_tolerance: 1,
 };
 
 /**
@@ -224,7 +225,7 @@ function buildAcqMultiplierExpr(config) {
  * هامش التطابق لمطابقة CT
  */
 function getMatchTolerance(config) {
-  return Number(config?.match_tolerance) ?? 0.0001;
+  return Number(config?.match_tolerance) ?? 1;
 }
 
 module.exports = {

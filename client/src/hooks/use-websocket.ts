@@ -9,6 +9,7 @@ export function useWebSocket(url: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const handlersRef = useRef<Map<string, MessageHandler[]>>(new Map());
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const intentionalCloseRef = useRef(false);
   const { token } = useAuthStore();
 
   const connect = useCallback(() => {
@@ -62,20 +63,27 @@ export function useWebSocket(url: string) {
         }
       };
 
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+      ws.onerror = () => {
+        // Only log errors after we were actually connected; avoids noise from
+        // "closed before the connection is established" (e.g. React Strict Mode unmount)
+        if (ws.readyState === WebSocket.OPEN) {
+          console.error('WebSocket error');
+        }
       };
 
       ws.onclose = () => {
+        const wasIntentional = intentionalCloseRef.current;
+        intentionalCloseRef.current = false;
         setIsConnected(false);
-        console.log('WebSocket disconnected');
-        
-        // Reconnect after 3 seconds
-        if (!reconnectTimeoutRef.current) {
-          reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectTimeoutRef.current = null;
-            connect();
-          }, 3000);
+        if (!wasIntentional) {
+          console.log('WebSocket disconnected');
+          // Reconnect after 3 seconds
+          if (!reconnectTimeoutRef.current) {
+            reconnectTimeoutRef.current = setTimeout(() => {
+              reconnectTimeoutRef.current = null;
+              connect();
+            }, 3000);
+          }
         }
       };
 
@@ -86,6 +94,7 @@ export function useWebSocket(url: string) {
   }, [url, token]);
 
   const disconnect = useCallback(() => {
+    intentionalCloseRef.current = true;
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;

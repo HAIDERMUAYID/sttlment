@@ -74,6 +74,15 @@ export function RouteGuard({
   if (resolvedPageKey && resolvedPageKey !== 'change_password') {
     const canView = hasPermission(user?.permissions, user?.role || '', resolvedPageKey, 'view');
     if (!canView) {
+      // تجنب حلقة إعادة التوجيه: إذا كان الوجهة لوحة التحكم ولا صلاحية لها، نعرض رسالة بدل التوجيه
+      if (resolvedPageKey === 'dashboard') {
+        return (
+          <div style={{ padding: '2rem', textAlign: 'center', minHeight: '40vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+            <p style={{ margin: 0, fontSize: '1rem', color: 'var(--muted-foreground)' }}>لا توجد لديك صلاحية لعرض هذه الصفحة.</p>
+            <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--muted-foreground)' }}>تواصل مع المدير لتفعيل الصلاحيات.</p>
+          </div>
+        );
+      }
       return <Navigate to="/dashboard" replace />;
     }
     return <>{children}</>;

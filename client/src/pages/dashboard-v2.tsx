@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import api from '@/lib/api';
 import Loading from '@/components/Loading';
+import { useHasPermission } from '@/hooks/useHasPermission';
 import {
   CheckSquare,
   Clock,
@@ -30,6 +31,7 @@ import ParticleBackground from '@/components/dashboard/ParticleBackground';
 import CountUpNumber from '@/components/dashboard/CountUpNumber';
 
 export function DashboardV2() {
+  const canViewReports = useHasPermission('reports', 'view');
   const [selectedDate, setSelectedDate] = useState(moment().format('YYYY-MM-DD'));
 
   const { data: report, isLoading } = useQuery({
@@ -38,6 +40,7 @@ export function DashboardV2() {
       const response = await api.get(`/reports/daily?date=${selectedDate}`);
       return response.data;
     },
+    enabled: canViewReports,
   });
 
   const completionRate = report?.scheduled?.total > 0
@@ -77,6 +80,16 @@ export function DashboardV2() {
     }
     setSelectedDate(newDate.format('YYYY-MM-DD'));
   };
+
+  if (!canViewReports) {
+    return (
+      <div style={{ padding: '2rem', minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '1rem' }}>
+        <BarChart3 style={{ width: 48, height: 48, color: 'var(--primary)', opacity: 0.7 }} />
+        <p style={{ fontSize: '1.1rem', color: 'var(--text)', margin: 0 }}>لوحة التحكم — لا توجد لديك صلاحية عرض بيانات التقرير اليومي.</p>
+        <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', margin: 0 }}>يمكنك التنقل إلى المهام أو غيرها من الصفحات حسب صلاحياتك.</p>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

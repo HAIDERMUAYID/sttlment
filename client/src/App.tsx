@@ -6,6 +6,8 @@ import { RouteGuard } from './components/route-guard';
 import { SuspenseFallback } from './components/suspense-fallback';
 import { NotFound } from './pages/not-found';
 
+const routerFutureFlags = { v7_startTransition: true, v7_relativeSplatPath: true } as const;
+
 // Lazy load all pages for better performance
 const LoginV2 = lazy(() => import('./pages/login-v2').then(m => ({ default: m.LoginV2 })));
 const QuickLogin = lazy(() => import('./pages/QuickLogin'));
@@ -28,13 +30,14 @@ const Merchants = lazy(() => import('./pages/admin/Merchants'));
 const RTGS = lazy(() => import('./pages/admin/RTGS').then(m => ({ default: m.RTGS })));
 const RtgsSettings = lazy(() => import('./pages/admin/RtgsSettings').then(m => ({ default: m.RtgsSettings })));
 const GovernmentSettlements = lazy(() => import('./pages/admin/GovernmentSettlements').then(m => ({ default: m.GovernmentSettlements })));
+const SettlementDetailsTable = lazy(() => import('./pages/admin/SettlementDetailsTable').then(m => ({ default: m.SettlementDetailsTable })));
 const CtMatching = lazy(() => import('./pages/admin/CtMatching'));
 const MerchantDisbursements = lazy(() => import('./pages/admin/MerchantDisbursements').then(m => ({ default: m.MerchantDisbursements })));
 
 function App() {
   return (
     <Providers>
-      <Router>
+      <Router future={routerFutureFlags}>
         <Suspense fallback={<SuspenseFallback />}>
           <Routes>
             {/* Public Routes */}
@@ -105,6 +108,7 @@ function App() {
               <Route path="tasks" element={<RouteGuard><Suspense fallback={<SuspenseFallback />}><TasksV2 /></Suspense></RouteGuard>} />
               <Route path="rtgs" element={<RouteGuard><Suspense fallback={<SuspenseFallback />}><RTGS /></Suspense></RouteGuard>} />
               <Route path="government-settlements" element={<RouteGuard><Suspense fallback={<SuspenseFallback />}><GovernmentSettlements /></Suspense></RouteGuard>} />
+              <Route path="settlement-details" element={<RouteGuard><Suspense fallback={<SuspenseFallback />}><SettlementDetailsTable /></Suspense></RouteGuard>} />
               <Route path="ct-matching" element={<RouteGuard><Suspense fallback={<SuspenseFallback />}><CtMatching /></Suspense></RouteGuard>} />
               <Route path="merchant-disbursements" element={<RouteGuard><Suspense fallback={<SuspenseFallback />}><MerchantDisbursements /></Suspense></RouteGuard>} />
               

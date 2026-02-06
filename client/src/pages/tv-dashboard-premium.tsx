@@ -576,6 +576,9 @@ const EmployeeSlide: React.FC<{ slide: any }> = ({ slide }) => {
     return name[0].toUpperCase();
   };
 
+  const [avatarError, setAvatarError] = useState(false);
+  useEffect(() => setAvatarError(false), [employee?.id]);
+
   return (
     <div className="slide employee-slide">
       <motion.div
@@ -584,14 +587,15 @@ const EmployeeSlide: React.FC<{ slide: any }> = ({ slide }) => {
         className="employee-header"
       >
         <div className="employee-avatar-section">
-          {employee.avatarUrl ? (
+          {employee.avatarUrl && !avatarError ? (
             <motion.img
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
               transition={{ type: 'spring', stiffness: 200 }}
-              src={employee.avatarUrl}
+              src={employee.avatarUrl.startsWith('http') ? employee.avatarUrl : `${window.location.origin}${employee.avatarUrl}`}
               alt={employee.name}
               className="employee-avatar"
+              onError={() => setAvatarError(true)}
             />
           ) : (
             <motion.div

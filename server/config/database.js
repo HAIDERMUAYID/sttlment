@@ -44,6 +44,7 @@ try {
     port: parseInt(u.port || '5432', 10),
     database: (u.pathname || '/').slice(1) || 'sttlment',
     ssl: useSSL ? { rejectUnauthorized: false } : false,
+    // حجم الـ pool: اضبط POOL_MAX في .env (مثلاً 10–20 حسب الحمل)
     max: parseInt(process.env.POOL_MAX || '10', 10),
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,

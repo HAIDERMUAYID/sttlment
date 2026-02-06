@@ -3,17 +3,33 @@ const crypto = require('crypto');
 const rtgsCalc = require('../utils/rtgsCalculation');
 
 const BATCH_SIZE = 2000;
+
+/** تخزين مؤقت خفيف لصفحة RTGS — تقليل التأخير عند تكرار نفس الطلب */
+const RTGS_CACHE_TTL_MS = {
+  filterOptions: 60 * 1000,   // 60 ثانية
+  list: 30 * 1000,            // 30 ثانية
+};
+const rtgsFilterOptionsCache = new Map();
+const rtgsListCache = new Map();
+
+function getCachedRtgs(cache, key) {
+  const entry = cache.get(key);
+  if (entry && Date.now() < entry.expiresAt) return entry.data;
+  return null;
+}
+function setCachedRtgs(cache, key, data, ttlMs) {
+  cache.set(key, { data, expiresAt: Date.now() + ttlMs });
+}
 /** حد أقصى لصفوف الاستيراد في طلب واحد — لتجنب انتهاء المهلة أو استهلاك الذاكرة */
 const MAX_IMPORT_ROWS = 150000;
 /** مهلة طلب الاستيراد (بالمللي ثانية) — لملفات كبيرة */
 const IMPORT_REQUEST_TIMEOUT_MS = 10 * 60 * 1000; // 10 دقائق
 
-/** هل الخطأ بسبب عدم وجود الجدول (لم تُنفَّذ الهجرة بعد) */
-function isTableMissingError(err) {
+/** هل الخطأ بسبب عدم وجود الجدول أو العمود (لم تُنفَّذ الهجرة بعد) — نُرجع بيانات فارغة بدل 500 */
+function isSchemaError(err) {
   const code = err?.code;
   const msg = (err?.message || '').toLowerCase();
-  if (msg.includes('column') && msg.includes('does not exist')) return false;
-  return code === '42P01' || msg.includes('does not exist') || msg.includes('relation "rtgs"') || msg.includes('relation "settlement_maps"') || msg.includes('relation "import_logs"') || msg.includes('relation "gov_settlement_summaries"') || msg.includes('relation "gov_settlement_details"');
+  return code === '42P01' || msg.includes('does not exist') || msg.includes('relation "rtgs"') || msg.includes('relation "settlement_maps"') || msg.includes('relation "import_logs"') || msg.includes('relation "gov_settlement_summaries"') || msg.includes('relation "gov_settlement_details"') || msg.includes('relation "ct_records"') || msg.includes('relation "merchants"') || msg.includes('relation "settings"');
 }
 
 /** تعبئة جدول مخزون التسويات الحكومية لملف استيراد معيّن (يُستدعى بعد كل استيراد RTGS). يُمرَّر null للبيانات القديمة بدون import_log_id */
@@ -44,11 +60,11 @@ async function refreshGovSettlementSummariesForImport(client, importLogId) {
       params
     );
   } catch (e) {
-    if (!isTableMissingError(e)) console.error('تحديث مخزون التسويات الحكومية:', e.message);
+    if (!isSchemaError(e)) console.error('تحديث مخزون التسويات الحكومية:', e.message);
   }
 }
 
-/** تعبئة جدول تفاصيل التسوية (تاجر + إجماليات) لملف استيراد — يُستدعى بعد كل استيراد RTGS */
+/** تعبئة جدول تفاصيل التسوية مجمّعة حسب (IBAN + الوزارة/المديرية/المحافظة) — صف واحد لكل مجموعة مع إجماليات */
 async function refreshGovSettlementDetailsForImport(client, importLogId) {
   try {
     const rtgsCfg = await rtgsCalc.getRtgsConfig();
@@ -67,14 +83,14 @@ async function refreshGovSettlementDetailsForImport(client, importLogId) {
          r.sttl_date,
          r.inst_id2,
          COALESCE(sm.display_name_ar, r.inst_id2, 'غير معرف'),
-         r.mer,
+         MIN(r.mer) AS mer,
          m.iban,
          m.ministry,
          m.directorate_name,
          m.governorate,
-         m.account_number,
-         m.branch_name,
-         m.branch_number,
+         MAX(m.account_number),
+         MAX(m.branch_name),
+         MAX(m.branch_number),
          COUNT(*)::int,
          COALESCE(SUM(r.amount), 0),
          COALESCE(SUM(${feeExpr}), 0),
@@ -84,12 +100,12 @@ async function refreshGovSettlementDetailsForImport(client, importLogId) {
        LEFT JOIN settlement_maps sm ON sm.inst_id = r.inst_id2
        LEFT JOIN merchants m ON m.merchant_id = r.mer
        ${whereClause}
-       GROUP BY r.import_log_id, r.sttl_date, r.inst_id2, sm.display_name_ar, r.mer,
-                m.iban, m.ministry, m.directorate_name, m.governorate, m.account_number, m.branch_name, m.branch_number`,
+       GROUP BY r.import_log_id, r.sttl_date, r.inst_id2, sm.display_name_ar,
+                m.iban, m.ministry, m.directorate_name, m.governorate`,
       params
     );
   } catch (e) {
-    if (!isTableMissingError(e)) console.error('تحديث تفاصيل التسوية:', e.message);
+    if (!isSchemaError(e)) console.error('تحديث تفاصيل التسوية:', e.message);
   }
 }
 
@@ -288,9 +304,31 @@ function normalizeRow(raw, headers, cfg) {
   };
 }
 
+/** التحقق من وجود أي فلتر مفعّل */
+function hasAnyFilter(query) {
+  const keys = [
+    'sttl_date_from', 'sttl_date_to', 'transaction_date_from', 'transaction_date_to',
+    'mer', 'mcc', 'inst_id2', 'search', 'text_search', 'message_type', 'ministry',
+    'directorate_name', 'bank_display_name', 'terminal_type', 'import_log_id',
+    'governorate', 'details', 'iban',
+  ];
+  return keys.some((k) => query[k] != null && String(query[k]).trim() !== '');
+}
+
+/** نطاق تاريخ افتراضي (آخر 90 يوماً) عند عدم إرسال أي فلتر — لظهور بيانات عند الضغط على "جلب/عرض البيانات" */
+function getDefaultDateRange() {
+  const to = new Date();
+  const from = new Date(to);
+  from.setDate(from.getDate() - 90);
+  return {
+    from: from.toISOString().slice(0, 10),
+    to: to.toISOString().slice(0, 10),
+  };
+}
+
 async function getRtgs(req, res) {
   try {
-    const {
+    let {
       page = 1,
       limit = 50,
       sttl_date_from,
@@ -312,6 +350,21 @@ async function getRtgs(req, res) {
       details,
       iban,
     } = req.query;
+
+    // إن لم يُرسل أي فلتر، استخدام نطاق تاريخ افتراضي (آخر 90 يوم) حتى تظهر بيانات
+    if (!hasAnyFilter(req.query)) {
+      const def = getDefaultDateRange();
+      sttl_date_from = def.from;
+      sttl_date_to = def.to;
+    }
+
+    const listCacheKey = `list:${[
+      page, limit, sttl_date_from, sttl_date_to, transaction_date_from, transaction_date_to,
+      mer, mcc, inst_id2, search, text_search, message_type, ministry, directorate_name,
+      bank_display_name, terminal_type, import_log_id, governorate, details, iban,
+    ].join('|')}`;
+    const cachedList = getCachedRtgs(rtgsListCache, listCacheKey);
+    if (cachedList) return res.json(cachedList);
 
     const params = [];
     let paramCount = 1;
@@ -462,7 +515,7 @@ async function getRtgs(req, res) {
       };
     });
 
-    res.json({
+    const listPayload = {
       rtgs: rows,
       pagination: {
         page: Math.floor(offset / limitVal) + 1,
@@ -470,53 +523,115 @@ async function getRtgs(req, res) {
         total,
         totalPages: Math.ceil(total / limitVal),
       },
-    });
+    };
+    setCachedRtgs(rtgsListCache, listCacheKey, listPayload, RTGS_CACHE_TTL_MS.list);
+    res.json(listPayload);
   } catch (error) {
-    if (isTableMissingError(error)) {
+    if (isSchemaError(error)) {
+      console.warn('RTGS getRtgs: جدول أو عمود مفقود — إرجاع بيانات فارغة. نفّذ الهجرات إن لزم:', error?.message);
       const limitVal = Math.min(100, Math.max(1, parseInt(req.query.limit || 50, 10)));
       return res.json({
         rtgs: [],
         pagination: { page: 1, limit: limitVal, total: 0, totalPages: 0 },
       });
     }
-    console.error('خطأ في جلب RTGS:', error);
+    console.error('خطأ في جلب RTGS:', error?.message || error);
+    if (error?.stack) console.error(error.stack);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 }
 
+const FILTER_OPTIONS_LIMIT = 500;
+
+/** خيارات الفلتر من جدول إدارة التجار والمصارف — دائماً متاحة قبل جلب البيانات */
 async function getRtgsFilterOptions(req, res) {
+  const limit = ` LIMIT ${FILTER_OPTIONS_LIMIT}`;
+  const emptyRtgs = { mccList: [], instId2List: [], messageTypeList: [], terminalTypeList: [] };
+
   try {
-    const [merResult, mccResult, instResult, msgResult, termResult, ministryResult, directorateResult, bankResult, governorateResult] = await Promise.all([
-      pool.query('SELECT DISTINCT mer FROM rtgs WHERE mer IS NOT NULL AND mer != \'\' ORDER BY mer'),
-      pool.query('SELECT DISTINCT mcc FROM rtgs WHERE mcc IS NOT NULL ORDER BY mcc'),
-      pool.query('SELECT DISTINCT inst_id2 FROM rtgs WHERE inst_id2 IS NOT NULL AND inst_id2 != \'\' ORDER BY inst_id2'),
-      pool.query('SELECT DISTINCT message_type FROM rtgs WHERE message_type IS NOT NULL AND message_type != \'\' ORDER BY message_type'),
-      pool.query('SELECT DISTINCT terminal_type FROM rtgs WHERE terminal_type IS NOT NULL AND terminal_type != \'\' ORDER BY terminal_type'),
-      pool.query(`SELECT DISTINCT m.ministry FROM rtgs r LEFT JOIN merchants m ON m.merchant_id = r.mer WHERE m.ministry IS NOT NULL AND TRIM(m.ministry) != '' ORDER BY m.ministry`),
-      pool.query(`SELECT DISTINCT m.directorate_name FROM rtgs r LEFT JOIN merchants m ON m.merchant_id = r.mer WHERE m.directorate_name IS NOT NULL AND TRIM(m.directorate_name) != '' ORDER BY m.directorate_name`),
-      pool.query(`SELECT DISTINCT sm.display_name_ar FROM rtgs r LEFT JOIN settlement_maps sm ON sm.inst_id = r.inst_id2 WHERE sm.display_name_ar IS NOT NULL AND TRIM(sm.display_name_ar) != '' ORDER BY sm.display_name_ar`),
-      pool.query(`SELECT DISTINCT m.governorate FROM rtgs r LEFT JOIN merchants m ON m.merchant_id = r.mer WHERE m.governorate IS NOT NULL AND TRIM(m.governorate) != '' ORDER BY m.governorate`),
-    ]);
-    res.json({
-      merList: merResult.rows.map((r) => r.mer),
-      mccList: mccResult.rows.map((r) => r.mcc),
-      instId2List: instResult.rows.map((r) => r.inst_id2),
-      messageTypeList: msgResult.rows.map((r) => r.message_type),
-      terminalTypeList: termResult.rows.map((r) => r.terminal_type),
-      ministryList: ministryResult.rows.map((r) => r.ministry),
-      directorateNameList: directorateResult.rows.map((r) => r.directorate_name),
-      bankDisplayNameList: bankResult.rows.map((r) => r.display_name_ar),
-      governorateList: governorateResult.rows.map((r) => r.governorate),
-    });
+    const { sttl_date_from, sttl_date_to } = req.query;
+    const useDateScope = sttl_date_from && sttl_date_to && String(sttl_date_from).trim() && String(sttl_date_to).trim();
+    const dateKey = useDateScope ? `${String(sttl_date_from).trim().slice(0, 10)}:${String(sttl_date_to).trim().slice(0, 10)}` : 'all';
+    const cached = getCachedRtgs(rtgsFilterOptionsCache, `fo:${dateKey}`);
+    if (cached) return res.json(cached);
+
+    const dateWhere = useDateScope ? ' AND r.sttl_date >= $1 AND r.sttl_date <= $2' : '';
+    const dateParams = useDateScope ? [String(sttl_date_from).trim().slice(0, 10), String(sttl_date_to).trim().slice(0, 10)] : [];
+
+    // 1) من جدول التجار و settlement_maps فقط — لا تعتمد على rtgs، حتى لا تبقى الفلاتر فارغة
+    let merList = [], ministryList = [], directorateNameList = [], governorateList = [], bankDisplayNameList = [];
+    try {
+      const [merFromMerchants, ministryResult, directorateResult, governorateResult, bankResult] = await Promise.all([
+        pool.query(`SELECT DISTINCT merchant_id AS mer FROM merchants WHERE merchant_id IS NOT NULL AND TRIM(merchant_id) != '' ORDER BY merchant_id ${limit}`),
+        pool.query(`SELECT DISTINCT ministry FROM merchants WHERE ministry IS NOT NULL AND TRIM(ministry) != '' ORDER BY ministry ${limit}`),
+        pool.query(`SELECT DISTINCT directorate_name FROM merchants WHERE directorate_name IS NOT NULL AND TRIM(directorate_name) != '' ORDER BY directorate_name ${limit}`),
+        pool.query(`SELECT DISTINCT governorate FROM merchants WHERE governorate IS NOT NULL AND TRIM(governorate) != '' ORDER BY governorate ${limit}`),
+        pool.query(`SELECT DISTINCT display_name_ar FROM settlement_maps WHERE display_name_ar IS NOT NULL AND TRIM(display_name_ar) != '' ORDER BY display_name_ar ${limit}`),
+      ]);
+      merList = merFromMerchants.rows.map((r) => r.mer);
+      ministryList = ministryResult.rows.map((r) => r.ministry);
+      directorateNameList = directorateResult.rows.map((r) => r.directorate_name);
+      governorateList = governorateResult.rows.map((r) => r.governorate);
+      bankDisplayNameList = bankResult.rows.map((r) => r.display_name_ar);
+    } catch (err) {
+      if (!isSchemaError(err)) console.error('خطأ في جلب خيارات الفلتر من التجار/المصارف:', err?.message);
+    }
+
+    // 2) من جدول rtgs (اختياري) — إن فشل أو الجدول فارغ نُرجع قوائم فارغة للحركات فقط
+    let mccList = [], instId2List = [], messageTypeList = [], terminalTypeList = [];
+    try {
+      const [mccResult, instResult, msgResult, termResult] = await Promise.all([
+        pool.query(`SELECT DISTINCT mcc FROM rtgs r WHERE r.mcc IS NOT NULL${dateWhere} ORDER BY r.mcc ${limit}`, dateParams),
+        pool.query(`SELECT DISTINCT inst_id2 FROM rtgs r WHERE r.inst_id2 IS NOT NULL AND r.inst_id2 != ''${dateWhere} ORDER BY r.inst_id2 ${limit}`, dateParams),
+        pool.query(`SELECT DISTINCT message_type FROM rtgs r WHERE r.message_type IS NOT NULL AND r.message_type != ''${dateWhere} ORDER BY r.message_type ${limit}`, dateParams),
+        pool.query(`SELECT DISTINCT terminal_type FROM rtgs r WHERE r.terminal_type IS NOT NULL AND r.terminal_type != ''${dateWhere} ORDER BY r.terminal_type ${limit}`, dateParams),
+      ]);
+      mccList = mccResult.rows.map((r) => r.mcc);
+      instId2List = instResult.rows.map((r) => r.inst_id2);
+      messageTypeList = msgResult.rows.map((r) => r.message_type);
+      terminalTypeList = termResult.rows.map((r) => r.terminal_type);
+    } catch (err) {
+      if (!isSchemaError(err)) console.error('خطأ في جلب خيارات الفلتر من rtgs:', err?.message);
+    }
+
+    const payload = {
+      merList,
+      ministryList,
+      directorateNameList,
+      governorateList,
+      bankDisplayNameList,
+      mccList,
+      instId2List,
+      messageTypeList,
+      terminalTypeList,
+    };
+    setCachedRtgs(rtgsFilterOptionsCache, `fo:${dateKey}`, payload, RTGS_CACHE_TTL_MS.filterOptions);
+    res.json(payload);
   } catch (error) {
-    if (isTableMissingError(error)) {
+    if (isSchemaError(error)) {
+      console.warn('RTGS getRtgsFilterOptions: جدول أو عمود مفقود — إرجاع قوائم فارغة:', error?.message);
       return res.json({
         merList: [], mccList: [], instId2List: [],
         messageTypeList: [], terminalTypeList: [], ministryList: [], directorateNameList: [], bankDisplayNameList: [], governorateList: [],
       });
     }
-    console.error('خطأ في خيارات الفلتر:', error);
-    res.status(500).json({ error: 'خطأ في الخادم' });
+    console.error('خطأ في خيارات الفلتر RTGS:', error?.message || error);
+    if (error?.stack) console.error(error.stack);
+    res.status(500).json({ error: error?.message || 'خطأ في الخادم' });
+  }
+}
+
+/** قائمة أسماء المصارف فقط — استعلام خفيف من settlement_maps (بدون مسح جدول rtgs) */
+async function getRtgsBankNames(req, res) {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT display_name_ar AS bank_name FROM settlement_maps WHERE display_name_ar IS NOT NULL AND TRIM(display_name_ar) != '' ORDER BY display_name_ar LIMIT 500`
+    );
+    res.json(result.rows.map((r) => r.bank_name));
+  } catch (error) {
+    if (isSchemaError(error)) return res.json([]);
+    console.error('خطأ في جلب أسماء المصارف:', error?.message || error);
+    res.status(500).json({ error: error?.message || 'خطأ في الخادم' });
   }
 }
 
@@ -525,7 +640,7 @@ async function getSettlementMaps(req, res) {
     const result = await pool.query('SELECT * FROM settlement_maps ORDER BY inst_id');
     res.json(result.rows);
   } catch (error) {
-    if (isTableMissingError(error)) return res.json([]);
+    if (isSchemaError(error)) return res.json([]);
     console.error('خطأ في جلب Settlement Maps:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
@@ -533,18 +648,19 @@ async function getSettlementMaps(req, res) {
 
 async function getImportLogs(req, res) {
   try {
-    const { limit = 20 } = req.query;
+    const { limit = 2000 } = req.query;
+    const limitVal = Math.min(5000, Math.max(1, parseInt(limit, 10)) || 2000);
     const result = await pool.query(
-      `SELECT il.*, u.name AS user_name
+      `SELECT il.id, il.user_id, il.filename, il.total_rows, il.inserted_rows, il.skipped_duplicates, il.rejected_rows, il.details, il.duration_ms, il.created_at, u.name AS user_name
        FROM import_logs il
        LEFT JOIN users u ON u.id = il.user_id
        ORDER BY il.created_at DESC
        LIMIT $1`,
-      [Math.min(100, Math.max(1, parseInt(limit, 10)))]
+      [limitVal]
     );
     res.json(result.rows);
   } catch (error) {
-    if (isTableMissingError(error)) return res.json([]);
+    if (isSchemaError(error)) return res.json([]);
     console.error('خطأ في جلب سجل الاستيراد:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
@@ -576,7 +692,7 @@ async function deleteImportLog(req, res) {
       client.release();
     }
   } catch (error) {
-    if (isTableMissingError(error)) {
+    if (isSchemaError(error)) {
       return res.status(503).json({ error: 'جداول RTGS غير مهيأة' });
     }
     console.error('خطأ في حذف سجل الاستيراد:', error);
@@ -607,7 +723,7 @@ async function deleteAllRtgs(req, res) {
       client.release();
     }
   } catch (error) {
-    if (isTableMissingError(error)) {
+    if (isSchemaError(error)) {
       return res.status(503).json({ error: 'جداول RTGS غير مهيأة' });
     }
     console.error('خطأ في حذف حركات RTGS:', error);
@@ -822,7 +938,7 @@ async function importRtgs(req, res) {
       rejected_sample: rejectedReasons.slice(0, 20),
     });
   } catch (error) {
-    if (isTableMissingError(error)) {
+    if (isSchemaError(error)) {
       return res.status(503).json({
         error: 'جداول RTGS غير مهيأة. يرجى تشغيل هجرة قاعدة البيانات أولاً: server/migrations/007_rtgs_module.sql',
       });
@@ -902,7 +1018,7 @@ async function getGovernmentSettlements(req, res) {
       },
     });
   } catch (error) {
-    if (isTableMissingError(error)) {
+    if (isSchemaError(error)) {
       return res.json({ data: [], pagination: { page: 1, limit: 100, total: 0, totalPages: 0 } });
     }
     console.error('خطأ في جلب التسويات الحكومية:', error);
@@ -999,7 +1115,7 @@ async function getGovernmentSettlementsByTransactionDateFromTable(req) {
     where += ` AND g.bank_display_name = ANY($${paramCount++}::text[])`;
     params.push(bankArr);
   }
-  const limitVal = Math.min(100, Math.max(1, parseInt(limit, 10)));
+  const limitVal = Math.min(5000, Math.max(1, parseInt(limit, 10)));
   const offset = (Math.max(1, parseInt(page, 10)) - 1) * limitVal;
 
   const countResult = await pool.query(
@@ -1104,7 +1220,7 @@ async function getGovernmentSettlementsByTransactionDateLive(req, res) {
       where += ` AND sm.display_name_ar = ANY($${paramCount++}::text[])`;
       params.push(bankArr);
     }
-    const limitVal = Math.min(100, Math.max(1, parseInt(limit, 10)));
+    const limitVal = Math.min(5000, Math.max(1, parseInt(limit, 10)));
     const offset = (Math.max(1, parseInt(page, 10)) - 1) * limitVal;
 
     const countResult = await pool.query(
@@ -1212,7 +1328,7 @@ async function getGovernmentSettlementsByTransactionDateLive(req, res) {
       },
     });
   } catch (error) {
-    if (isTableMissingError(error)) {
+    if (isSchemaError(error)) {
       return res.json({ data: [], summary: { total_settlements: 0, total_movements: 0, total_amount: 0, total_fees: 0, total_acq: 0, total_sttle: 0 }, pagination: { page: 1, limit: 20, total: 0, totalPages: 0 } });
     }
     console.error('خطأ في جلب التسويات الحكومية حسب تاريخ الحركة:', error);
@@ -1230,13 +1346,18 @@ async function getGovernmentSettlementsByTransactionDate(req, res) {
     }
     return res.json(result);
   } catch (e) {
-    if (!isTableMissingError(e)) console.error('قراءة من جدول التسويات:', e?.message);
+    if (!isSchemaError(e)) console.error('قراءة من جدول التسويات:', e?.message);
     return getGovernmentSettlementsByTransactionDateLive(req, res);
   }
 }
 
 async function exportRtgs(req, res) {
   try {
+    if (!hasAnyFilter(req.query)) {
+      return res.status(400).json({
+        error: 'يجب تحديد فلتر واحد على الأقل للتصدير (مثل فترة التواريخ) لتقليل الحمل على النظام.',
+      });
+    }
     const {
       sttl_date_from,
       sttl_date_to,
@@ -1371,7 +1492,7 @@ async function exportRtgs(req, res) {
     const buffer = await workbook.xlsx.writeBuffer();
     res.send(buffer);
   } catch (error) {
-    if (isTableMissingError(error)) {
+    if (isSchemaError(error)) {
       return res.status(503).json({ error: 'جداول RTGS غير مهيأة' });
     }
     console.error('خطأ في تصدير RTGS:', error);
@@ -1446,7 +1567,7 @@ async function matchRrnExcel(req, res) {
     }
     res.json({ results });
   } catch (error) {
-    if (isTableMissingError(error)) {
+    if (isSchemaError(error)) {
       return res.status(503).json({ error: 'جداول RTGS غير مهيأة' });
     }
     console.error('خطأ في مطابقة RRN من Excel:', error);
@@ -1454,23 +1575,21 @@ async function matchRrnExcel(req, res) {
   }
 }
 
-/** ملخص ACQ و FEES لفترة تسوية — لصفحة موظف الحسابات / مطابقة CT */
+/** ملخص ACQ و FEES لفترة تسوية — من جدول الملخصات (سريع)، لصفحة مطابقة CT */
 async function getAcqFeesSummary(req, res) {
   try {
     const { sttl_date_from, sttl_date_to } = req.query;
     if (!sttl_date_from || !sttl_date_to) {
       return res.status(400).json({ error: 'من تاريخ التسوية وإلى تاريخ التسوية مطلوبان' });
     }
-    const rtgsCfg = await rtgsCalc.getRtgsConfig();
-    const feeExpr = rtgsCalc.buildFeeExpr(rtgsCfg);
-    const acqMult = rtgsCalc.buildAcqMultiplierExpr(rtgsCfg);
     const q = `
       SELECT
-        COUNT(*) AS total_movements,
-        COALESCE(SUM(${feeExpr}), 0) AS sum_fees,
-        COALESCE(SUM(${feeExpr} * ${acqMult}), 0) AS sum_acq
-      FROM rtgs r
-      WHERE r.sttl_date >= $1 AND r.sttl_date <= $2
+        COALESCE(SUM(g.movement_count), 0)::bigint AS total_movements,
+        COALESCE(SUM(g.sum_fees), 0) AS sum_fees,
+        COALESCE(SUM(g.sum_acq), 0) AS sum_acq,
+        COALESCE(SUM(g.sum_amount), 0) AS total_amount
+      FROM gov_settlement_summaries g
+      WHERE g.sttl_date >= $1::date AND g.sttl_date <= $2::date
     `;
     const result = await pool.query(q, [sttl_date_from, sttl_date_to]);
     const row = result.rows[0] || {};
@@ -1485,7 +1604,7 @@ async function getAcqFeesSummary(req, res) {
       sum_acq_plus_fees: Math.round((sum_acq + sum_fees) * 1000000) / 1000000,
     });
   } catch (error) {
-    if (isTableMissingError(error)) {
+    if (isSchemaError(error)) {
       return res.json({
         sttl_date_from: req.query.sttl_date_from,
         sttl_date_to: req.query.sttl_date_to,
@@ -1537,14 +1656,9 @@ async function createCtRecord(req, res) {
     if (isNaN(ctVal)) {
       return res.status(400).json({ error: 'قيمة CT يجب أن تكون رقماً' });
     }
-    const rtgsCfg = await rtgsCalc.getRtgsConfig();
-    const feeExpr = rtgsCalc.buildFeeExpr(rtgsCfg);
-    const acqMult = rtgsCalc.buildAcqMultiplierExpr(rtgsCfg);
     const summaryResult = await pool.query(
-      `SELECT
-        COALESCE(SUM(${feeExpr}), 0) AS sum_fees,
-        COALESCE(SUM(${feeExpr} * ${acqMult}), 0) AS sum_acq
-       FROM rtgs r WHERE r.sttl_date >= $1::date AND r.sttl_date <= $2::date`,
+      `SELECT COALESCE(SUM(g.sum_fees), 0) AS sum_fees, COALESCE(SUM(g.sum_acq), 0) AS sum_acq
+       FROM gov_settlement_summaries g WHERE g.sttl_date >= $1::date AND g.sttl_date <= $2::date`,
       [fromNorm, toNorm]
     );
     const row = summaryResult.rows[0] || {};
@@ -1574,10 +1688,14 @@ async function createCtRecord(req, res) {
     });
   } catch (error) {
     if (error?.code === '42P01') {
-      return res.status(500).json({ error: 'جدول سجلات CT غير موجود. شغّل الهجرات (npm run migrate).' });
+      const msg = (error?.message || '').toLowerCase();
+      if (msg.includes('gov_settlement')) {
+        return res.status(400).json({ error: 'جدول تفاصيل التسوية غير معبأ. نفّذ «تعبئة الجدول» من صفحة التسويات الحكومية ثم أعد المحاولة.' });
+      }
+      return res.status(400).json({ error: 'جدول سجلات CT غير موجود. شغّل الهجرات (npm run migrate).' });
     }
     console.error('خطأ في إدراج CT:', error);
-    res.status(500).json({ error: 'خطأ في الخادم' });
+    res.status(500).json({ error: error?.message || 'خطأ في الخادم' });
   }
 }
 
@@ -1625,8 +1743,6 @@ async function getCtRecords(req, res) {
       );
     }
     const rows = result.rows || [];
-    const rtgsCfg = await rtgsCalc.getRtgsConfig();
-    const feeExpr = rtgsCalc.buildFeeExpr(rtgsCfg);
     /** استخراج تاريخ بصيغة YYYY-MM-DD — الصفوف تأتي الآن كنص من to_char فلا تحويل توقيت */
     const toDateOnly = (v) => {
       if (v == null) return '';
@@ -1634,8 +1750,6 @@ async function getCtRecords(req, res) {
       if (v instanceof Date && !isNaN(v.getTime())) return v.toISOString().slice(0, 10);
       return String(v).slice(0, 10);
     };
-    const acqMult = rtgsCalc.buildAcqMultiplierExpr(rtgsCfg);
-    const acqExpr = `COALESCE(SUM(${feeExpr} * ${acqMult}), 0)`;
     const uniqueRanges = [...new Set(rows.map((r) => {
       const from = toDateOnly(r.sttl_date_from);
       const to = toDateOnly(r.sttl_date_to);
@@ -1647,7 +1761,7 @@ async function getCtRecords(req, res) {
       if (!from || !to) { acqByRange[key] = 0; continue; }
       try {
         const q = await pool.query(
-          `SELECT ${acqExpr} AS sum_acq FROM rtgs r WHERE r.sttl_date >= $1::date AND r.sttl_date <= $2::date`,
+          `SELECT COALESCE(SUM(g.sum_acq), 0) AS sum_acq FROM gov_settlement_summaries g WHERE g.sttl_date >= $1::date AND g.sttl_date <= $2::date`,
           [from, to]
         );
         const val = parseFloat(q.rows[0]?.sum_acq) || 0;
@@ -1680,11 +1794,11 @@ async function getCtRecords(req, res) {
     });
     res.json({ data: out });
   } catch (error) {
-    if (error?.code === '42P01') {
+    if (error?.code === '42P01' || isSchemaError(error)) {
       return res.json({ data: [] });
     }
-    console.error('خطأ في جلب سجلات CT:', error);
-    res.status(500).json({ error: 'خطأ في الخادم' });
+    console.error('خطأ في جلب سجلات CT:', error?.message || error);
+    res.status(500).json({ error: error?.message || 'خطأ في الخادم' });
   }
 }
 
@@ -1783,62 +1897,57 @@ async function getCtMatchingReport(req, res) {
     const toNorm = String(sttl_date_to).slice(0, 10);
 
     const rtgsCfg = await rtgsCalc.getRtgsConfig();
-    const feeExpr = rtgsCalc.buildFeeExpr(rtgsCfg);
-    const acqMult = rtgsCalc.buildAcqMultiplierExpr(rtgsCfg);
-    const acqExpr = `${feeExpr} * ${acqMult}`;
 
-    const fromJoinMerchant = ` FROM rtgs r LEFT JOIN merchants m ON m.merchant_id = r.mer `;
-    const govCol = `COALESCE(NULLIF(TRIM(m.governorate), ''), 'غير معرف')`;
-    const dirCol = `COALESCE(NULLIF(TRIM(m.directorate_name), ''), 'غير معرف')`;
-
+    /* اعتماد كامل على جدول الملخصات وجدول التفاصيل — أسرع من RTGS وحركاته الكثيرة */
     const [summaryRes, byBankRes, byDayRes, byDirectorateGovRes, ctRecordsRes] = await Promise.all([
       pool.query(
         `SELECT
-          COUNT(*) AS total_movements,
-          COALESCE(SUM(r.amount), 0) AS total_amount,
-          COALESCE(SUM(${feeExpr}), 0) AS sum_fees,
-          COALESCE(SUM(${acqExpr}), 0) AS sum_acq
-         FROM rtgs r WHERE r.sttl_date >= $1::date AND r.sttl_date <= $2::date`,
+          COALESCE(SUM(g.movement_count), 0)::bigint AS total_movements,
+          COALESCE(SUM(g.sum_amount), 0) AS total_amount,
+          COALESCE(SUM(g.sum_fees), 0) AS sum_fees,
+          COALESCE(SUM(g.sum_acq), 0) AS sum_acq
+         FROM gov_settlement_summaries g
+         WHERE g.sttl_date >= $1::date AND g.sttl_date <= $2::date`,
         [fromNorm, toNorm]
       ),
       pool.query(
         `SELECT
-          COALESCE(sm.display_name_ar, r.inst_id2, 'غير معرف') AS bank_name,
-          COUNT(*) AS movement_count,
-          COALESCE(SUM(r.amount), 0) AS sum_amount,
-          COALESCE(SUM(${feeExpr}), 0) AS sum_fees,
-          COALESCE(SUM(${acqExpr}), 0) AS sum_acq
-         FROM rtgs r
-         LEFT JOIN settlement_maps sm ON sm.inst_id = r.inst_id2
-         WHERE r.sttl_date >= $1::date AND r.sttl_date <= $2::date
-         GROUP BY COALESCE(sm.display_name_ar, r.inst_id2, 'غير معرف')
+          g.bank_display_name AS bank_name,
+          SUM(g.movement_count)::bigint AS movement_count,
+          COALESCE(SUM(g.sum_amount), 0) AS sum_amount,
+          COALESCE(SUM(g.sum_fees), 0) AS sum_fees,
+          COALESCE(SUM(g.sum_acq), 0) AS sum_acq
+         FROM gov_settlement_summaries g
+         WHERE g.sttl_date >= $1::date AND g.sttl_date <= $2::date
+         GROUP BY g.bank_display_name, g.inst_id2
          ORDER BY bank_name`,
         [fromNorm, toNorm]
       ),
       pool.query(
         `SELECT
-          to_char(r.sttl_date, 'YYYY-MM-DD') AS sttl_date,
-          COUNT(*) AS movement_count,
-          COALESCE(SUM(r.amount), 0) AS sum_amount,
-          COALESCE(SUM(${feeExpr}), 0) AS sum_fees,
-          COALESCE(SUM(${acqExpr}), 0) AS sum_acq
-         FROM rtgs r
-         WHERE r.sttl_date >= $1::date AND r.sttl_date <= $2::date
-         GROUP BY r.sttl_date
-         ORDER BY r.sttl_date`,
+          to_char(g.sttl_date, 'YYYY-MM-DD') AS sttl_date,
+          SUM(g.movement_count)::bigint AS movement_count,
+          COALESCE(SUM(g.sum_amount), 0) AS sum_amount,
+          COALESCE(SUM(g.sum_fees), 0) AS sum_fees,
+          COALESCE(SUM(g.sum_acq), 0) AS sum_acq
+         FROM gov_settlement_summaries g
+         WHERE g.sttl_date >= $1::date AND g.sttl_date <= $2::date
+         GROUP BY g.sttl_date
+         ORDER BY g.sttl_date`,
         [fromNorm, toNorm]
       ),
       pool.query(
         `SELECT
-          ${govCol} AS governorate,
-          ${dirCol} AS directorate_name,
-          COUNT(*) AS movement_count,
-          COALESCE(SUM(r.amount), 0) AS sum_amount,
-          COALESCE(SUM(${feeExpr}), 0) AS sum_fees,
-          COALESCE(SUM(${acqExpr}), 0) AS sum_acq
-         ${fromJoinMerchant}
-         WHERE r.sttl_date >= $1::date AND r.sttl_date <= $2::date
-         GROUP BY ${govCol}, ${dirCol}
+          COALESCE(NULLIF(TRIM(g.governorate), ''), 'غير معرف') AS governorate,
+          COALESCE(NULLIF(TRIM(g.directorate_name), ''), 'غير معرف') AS directorate_name,
+          SUM(g.movement_count)::bigint AS movement_count,
+          COALESCE(SUM(g.sum_amount), 0) AS sum_amount,
+          COALESCE(SUM(g.sum_fees), 0) AS sum_fees,
+          COALESCE(SUM(g.sum_acq), 0) AS sum_acq
+         FROM gov_settlement_details g
+         WHERE g.sttl_date >= $1::date AND g.sttl_date <= $2::date
+         GROUP BY COALESCE(NULLIF(TRIM(g.governorate), ''), 'غير معرف'),
+                  COALESCE(NULLIF(TRIM(g.directorate_name), ''), 'غير معرف')
          ORDER BY sum_acq DESC NULLS LAST`,
         [fromNorm, toNorm]
       ),
@@ -1916,11 +2025,32 @@ async function getCtMatchingReport(req, res) {
       ct_records,
     });
   } catch (error) {
-    if (error?.code === '42P01') {
-      return res.status(500).json({ error: 'جدول RTGS أو ct_records غير موجود' });
+    if (isSchemaError(error) || error?.code === '42P01') {
+      const msg = (error?.message || '').toLowerCase();
+      if (msg.includes('gov_settlement')) {
+        const fromNorm = String(req.query.sttl_date_from || req.query.date_from || '').slice(0, 10);
+        const toNorm = String(req.query.sttl_date_to || req.query.date_to || '').slice(0, 10);
+        return res.status(200).json({
+          period: { sttl_date_from: fromNorm || null, sttl_date_to: toNorm || null },
+          summary: { total_movements: 0, total_amount: 0, sum_fees: 0, sum_acq: 0 },
+          by_bank: [],
+          by_day: [],
+          by_directorate_governorate: [],
+          ct_records: [],
+          _message: 'جدول تفاصيل/ملخص التسوية غير معبأ. نفّذ «تعبئة الجدول» من صفحة التسويات الحكومية.',
+        });
+      }
+      return res.status(200).json({
+        period: { sttl_date_from: null, sttl_date_to: null },
+        summary: { total_movements: 0, total_amount: 0, sum_fees: 0, sum_acq: 0 },
+        by_bank: [],
+        by_day: [],
+        by_directorate_governorate: [],
+        ct_records: [],
+      });
     }
     console.error('خطأ في تقرير مطابقة CT:', error);
-    res.status(500).json({ error: 'خطأ في الخادم' });
+    res.status(500).json({ error: error?.message || 'خطأ في الخادم' });
   }
 }
 
@@ -1987,10 +2117,14 @@ async function getGovernmentSettlementDetails(req, res) {
       where += (inst_id2 ? ' AND g.bank_display_name = $3 ' : ' AND g.bank_display_name = $2 ');
     }
     const result = await pool.query(
-      `SELECT g.iban, g.ministry, g.directorate_name, g.governorate, g.account_number, g.branch_name, g.branch_number,
-              g.movement_count, g.sum_amount, g.sum_fees, g.sum_acq, g.sum_sttle, g.mer, g.bank_display_name, g.inst_id2
+      `SELECT g.iban, g.ministry, g.directorate_name, g.governorate,
+              MAX(g.account_number) AS account_number, MAX(g.branch_name) AS branch_name, MAX(g.branch_number) AS branch_number,
+              SUM(g.movement_count)::int AS movement_count, SUM(g.sum_amount) AS sum_amount, SUM(g.sum_fees) AS sum_fees,
+              SUM(g.sum_acq) AS sum_acq, SUM(g.sum_sttle) AS sum_sttle,
+              MAX(g.mer) AS mer, MAX(g.bank_display_name) AS bank_display_name, MAX(g.inst_id2) AS inst_id2
        FROM gov_settlement_details g ${where}
-       ORDER BY g.mer`,
+       GROUP BY g.sttl_date, g.inst_id2, g.bank_display_name, g.iban, g.ministry, g.directorate_name, g.governorate
+       ORDER BY g.iban, g.ministry, g.directorate_name, g.governorate`,
       params
     );
     const rows = (result.rows || []).map((r) => ({
@@ -2013,7 +2147,7 @@ async function getGovernmentSettlementDetails(req, res) {
     }));
     res.json({ sttl_date: dateStr, inst_id2: params[1] || null, bank_display_name: bank_display_name || null, details: rows });
   } catch (e) {
-    if (isTableMissingError(e)) return res.json({ sttl_date: req.query.sttl_date?.slice(0, 10), details: [] });
+    if (isSchemaError(e)) return res.json({ sttl_date: req.query.sttl_date?.slice(0, 10), details: [] });
     console.error('خطأ في جلب تفاصيل التسوية:', e);
     res.status(500).json({ error: e?.message || 'خطأ في الخادم' });
   }
@@ -2042,7 +2176,7 @@ async function getGovernmentSettlementSum(req, res) {
     const sumSttle = result.rows[0] ? parseFloat(result.rows[0].sum_sttle) : 0;
     res.json({ sum_sttle: sumSttle, sttl_date: dateStr, bank_display_name: String(bank_display_name).trim() });
   } catch (error) {
-    if (isTableMissingError(error)) return res.json({ sum_sttle: 0, sttl_date: req.query.sttl_date?.slice(0, 10), bank_display_name: req.query.bank_display_name });
+    if (isSchemaError(error)) return res.json({ sum_sttle: 0, sttl_date: req.query.sttl_date?.slice(0, 10), bank_display_name: req.query.bank_display_name });
     console.error('خطأ في جلب مجموع التسوية:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
@@ -2068,7 +2202,7 @@ async function backfillGovSettlementSummaries(req, res) {
       total_rows: totalRows,
     });
   } catch (e) {
-    if (isTableMissingError(e)) {
+    if (isSchemaError(e)) {
       return res.status(503).json({ error: 'جدول gov_settlement_summaries غير موجود. شغّل الهجرة 018 أولاً.' });
     }
     console.error('خطأ في تعبئة التسويات الحكومية:', e);
@@ -2079,6 +2213,7 @@ async function backfillGovSettlementSummaries(req, res) {
 module.exports = {
   getRtgs,
   getRtgsFilterOptions,
+  getRtgsBankNames,
   getSettlementMaps,
   getImportLogs,
   deleteImportLog,

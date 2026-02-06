@@ -199,11 +199,11 @@ export function TVSettingsV2() {
   });
 
   const { data: bankOptions = [] } = useQuery({
-    queryKey: ['rtgs-filter-options'],
+    queryKey: ['rtgs-bank-names'],
     queryFn: async () => {
       try {
-        const res = await api.get('/rtgs/filter-options');
-        return res.data?.bankDisplayNameList ?? [];
+        const res = await api.get('/rtgs/bank-names');
+        return Array.isArray(res.data) ? res.data : [];
       } catch {
         return [];
       }

@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useQuery } from '@tanstack/react-query';
+import { useHasPermission } from '@/hooks/useHasPermission';
 import api from '@/lib/api';
 import { Lock, Eye, EyeOff, Upload, X, User, Camera } from 'lucide-react';
 import { Avatar } from '@/components/ui/avatar';
@@ -12,6 +13,7 @@ import { Avatar } from '@/components/ui/avatar';
 export function ChangePasswordV2() {
   const { toast } = useToast();
   const { user, updateUser } = useAuthStore();
+  const canSelfUpdate = useHasPermission('change_password', 'self_update');
   const [formData, setFormData] = useState({
     currentPassword: '',
     newPassword: '',
@@ -258,7 +260,7 @@ export function ChangePasswordV2() {
           </div>
         </motion.div>
 
-        {/* Password Section */}
+        {/* Password Section — يظهر فقط بصلاحية self_update */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -270,8 +272,12 @@ export function ChangePasswordV2() {
             <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(2, 97, 116, 0.1)' }}>
               <Lock className="w-5 h-5" style={{ color: 'var(--primary-600)' }} />
             </div>
-            <h2 className="text-base font-bold m-0" style={{ color: 'var(--text-strong)' }}>تغيير كلمة المرور</h2>
+            <h2 className="text-base font-bold m-0" style={{ color: 'var(--text-strong)' }}>كلمة المرور</h2>
           </div>
+          {!canSelfUpdate ? (
+            <p className="text-sm m-0" style={{ color: 'var(--muted-foreground)' }}>لا توجد لديك صلاحية لتغيير كلمة المرور. تواصل مع المدير إن احتجت تفعيلها.</p>
+          ) : (
+          <>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <label className="text-sm font-semibold block" style={{ color: 'var(--text-strong)' }}>كلمة المرور الحالية *</label>
@@ -376,6 +382,8 @@ export function ChangePasswordV2() {
               {loading ? 'جاري التحديث...' : 'تغيير كلمة المرور'}
             </Button>
           </form>
+          </>
+          )}
         </motion.div>
       </div>
     </div>

@@ -1,17 +1,11 @@
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
+const { getAvatarsDir } = require('../utils/uploadPath');
 
-// إنشاء مجلد uploads/avatars إذا لم يكن موجوداً
-const uploadsDir = path.join(process.cwd(), 'uploads', 'avatars');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-// إعداد multer لرفع الصور
+// إعداد multer لرفع الصور (المسار من UPLOAD_PATH إن وُجد — للتخزين الدائم)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadsDir);
+    cb(null, getAvatarsDir());
   },
   filename: (req, file, cb) => {
     // اسم الملف: userId_timestamp.extension

@@ -28,7 +28,8 @@ const defaultSettings = {
     precision_decimals: 6,
   },
   acq: { pos_rate: 0.7, non_pos_rate: 0.65 },
-  match_tolerance: 0.0001,
+  /** هامش تطابق (دينار) — فروق أقل منه تُعتبر مطابقة */
+  match_tolerance: 1,
 };
 
 export function RtgsSettings() {

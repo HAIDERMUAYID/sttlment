@@ -35,17 +35,28 @@ const login = async (req, res) => {
       return res.status(401).json({ error: 'البريد الإلكتروني أو كلمة المرور غير صحيحة' });
     }
     
-    // تسجيل الحضور (أول تسجيل دخول في اليوم)
+    // تسجيل الحضور (أول تسجيل دخول في اليوم) — لا نُفشّل تسجيل الدخول إذا فشل الحضور
     const today = getTodayBaghdad();
     const now = getNowBaghdad();
-    
-    await pool.query(
-      `INSERT INTO attendance (user_id, date, first_login_at)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (user_id, date) DO NOTHING`,
-      [user.id, today, now.toDate()]
-    );
-    
+    try {
+      await pool.query(
+        `INSERT INTO attendance (user_id, date, first_login_at)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, date) DO NOTHING`,
+        [user.id, today, now.toDate()]
+      );
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[attendance] تم تسجيل الحضور:', { userId: user.id, date: today, first_login_at: now.format('YYYY-MM-DD HH:mm:ss') });
+      }
+    } catch (attendanceErr) {
+      console.error('[attendance] فشل تسجيل الحضور (تسجيل الدخول سيستمر):', {
+        userId: user.id,
+        date: today,
+        first_login_at: now.format('YYYY-MM-DD HH:mm:ss'),
+        error: attendanceErr.message
+      });
+    }
+
     // إنشاء التوكن
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },

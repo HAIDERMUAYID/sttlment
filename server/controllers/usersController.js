@@ -1,6 +1,9 @@
+const path = require('path');
+const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const pool = require('../config/database');
 const { auditLog } = require('../middleware/auth');
+const { getAvatarsDir } = require('../utils/uploadPath');
 
 // الحصول على جميع المستخدمين
 const getUsers = async (req, res) => {
@@ -225,10 +228,8 @@ const uploadAvatar = async (req, res) => {
     // حذف الصورة القديمة إن وجدت
     const userResult = await pool.query('SELECT avatar_url FROM users WHERE id = $1', [userId]);
     if (userResult.rows[0]?.avatar_url) {
-      const fs = require('fs');
-      const path = require('path');
       const oldFilename = userResult.rows[0].avatar_url.split('/').pop();
-      const oldFilePath = path.join(process.cwd(), 'uploads', 'avatars', oldFilename);
+      const oldFilePath = path.join(getAvatarsDir(), oldFilename);
       if (fs.existsSync(oldFilePath)) {
         fs.unlinkSync(oldFilePath);
       }
@@ -269,11 +270,8 @@ const deleteAvatar = async (req, res) => {
     const avatarUrl = userResult.rows[0]?.avatar_url;
 
     if (avatarUrl) {
-      // حذف الملف من النظام
-      const fs = require('fs');
-      const path = require('path');
       const filename = avatarUrl.split('/').pop();
-      const filePath = path.join(process.cwd(), 'uploads', 'avatars', filename);
+      const filePath = path.join(getAvatarsDir(), filename);
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }
@@ -349,10 +347,8 @@ const deleteUser = async (req, res) => {
 
     if (user.avatar_url) {
       try {
-        const fs = require('fs');
-        const path = require('path');
         const filename = user.avatar_url.split('/').pop();
-        const filePath = path.join(process.cwd(), 'uploads', 'avatars', filename);
+        const filePath = path.join(getAvatarsDir(), filename);
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
         }

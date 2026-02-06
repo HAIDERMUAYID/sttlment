@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 const { loadUserPermissions, hasPermission } = require('../utils/permissions');
+const { getTodayBaghdad, getNowBaghdad } = require('../utils/timezone');
 
 // التحقق من التوكن
 const authenticate = async (req, res, next) => {
@@ -25,6 +26,24 @@ const authenticate = async (req, res, next) => {
     
     req.user = result.rows[0];
     req.user.permissions = await loadUserPermissions(req.user.id, req.user.role);
+
+    // تسجيل الحضور عند أول طلب مصادق في اليوم (حتى لو لم يعيد المستخدم تسجيل الدخول)
+    try {
+      const today = getTodayBaghdad();
+      const now = getNowBaghdad();
+      await pool.query(
+        `INSERT INTO attendance (user_id, date, first_login_at)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, date) DO NOTHING`,
+        [req.user.id, today, now.toDate()]
+      );
+    } catch (attendanceErr) {
+      // لا نُفشّل الطلب إذا فشل تسجيل الحضور
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[attendance] فشل تسجيل الحضور في middleware:', attendanceErr.message);
+      }
+    }
+
     next();
   } catch (error) {
     return res.status(401).json({ error: 'توكن غير صالح' });

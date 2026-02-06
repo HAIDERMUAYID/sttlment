@@ -102,6 +102,186 @@ const formatNum = (n: number | null) => {
   return Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 6 });
 };
 
+/** بناء HTML تقرير CT للطباعة — مع نسب، مخطط أعمدة، شعار الشركة، وتنظيم احترافي */
+function buildReportPrintHtml(
+  data: CtMatchingReportData,
+  fmtNum: (n: number | null) => string,
+  fmtDate: (d: string | Date | null) => string,
+  baseUrl: string = ''
+): string {
+  const esc = (s: string) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const img = (path: string) => (baseUrl ? baseUrl.replace(/\/$/, '') + path : path);
+  const totalAmount = Number(data.summary.total_amount) || 1;
+  const totalAcq = Number(data.summary.sum_acq) || 1;
+  const totalFees = Number(data.summary.sum_fees) || 1;
+
+  const head = `
+<header class="report-print-header mb-10 pt-8 pb-8 px-8 rounded-2xl" style="background:linear-gradient(135deg,#026174 0%,#068294 100%);color:#fff;box-shadow:0 10px 30px rgba(2,97,116,0.35);">
+  <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:24px;margin-bottom:20px;">
+    <div style="flex-shrink:0;width:88px;height:88px;border-radius:16px;background:rgba(255,255,255,0.25);border:2px solid rgba(255,255,255,0.5);box-shadow:0 4px 16px rgba(0,0,0,0.15);display:flex;align-items:center;justify-content:center;padding:10px;">
+      <img src="${img('/logo.png')}" alt="شعار الشركة" style="max-height:100%;max-width:100%;object-fit:contain;" />
+    </div>
+    <div style="text-align:center;">
+      <h1 style="font-size:1.75rem;font-weight:800;margin:0 0 6px 0;color:#fff;letter-spacing:-0.02em;">مطابقة حوالة عمولات واردة من البنك المركزي</h1>
+      <p style="margin:0;color:rgba(255,255,255,0.98);font-weight:600;font-size:1rem;">شركة الساقي لخدمات الدفع الإلكتروني</p>
+      <p style="margin:4px 0 0 0;font-size:0.9rem;color:rgba(255,255,255,0.92);font-weight:500;">قسم التسويات والمطابقات</p>
+    </div>
+  </div>
+  <div class="report-print-period" style="display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:24px 16px;padding:14px 24px;border-radius:12px;font-size:0.9rem;font-weight:600;margin-top:8px;background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);color:#fff;">
+    <span>فترة التسوية: <span dir="ltr">${esc(fmtDate(data.period.sttl_date_from))} — ${esc(fmtDate(data.period.sttl_date_to))}</span></span>
+    <span dir="ltr">تاريخ الإصدار: ${new Date().toLocaleDateString('ar-IQ', { year: 'numeric', month: 'long', day: 'numeric' })}</span>
+  </div>
+</header>`;
+
+  const stampBlock = `
+<div class="report-stamp" style="display:flex;justify-content:flex-end;margin-bottom:20px;padding:0;">
+  <img src="${img('/stamp-settlement-reconciliation.png')}" alt="ختم قسم التسويات والمطابقات" style="height:100px;width:auto;object-fit:contain;" />
+</div>`;
+
+  const kpi = `
+<section class="mb-10">
+  <h2 style="font-size:1.05rem;font-weight:700;color:#0f172a;margin:0 0 14px 0;padding-bottom:10px;border-bottom:2px solid #026174;text-align:center;">مؤشرات الأداء</h2>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;">
+    <div style="padding:20px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 2px 8px rgba(15,23,42,0.06);"><p style="font-size:0.75rem;color:#64748b;margin:0 0 6px 0;font-weight:600;">عدد الحركات</p><p style="font-size:1.3rem;font-weight:700;margin:0;" dir="ltr">${data.summary.total_movements.toLocaleString('en-US')}</p></div>
+    <div style="padding:20px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 2px 8px rgba(15,23,42,0.06);"><p style="font-size:0.75rem;color:#64748b;margin:0 0 6px 0;font-weight:600;">إجمالي المبلغ (IQD)</p><p style="font-size:1.3rem;font-weight:700;margin:0;" dir="ltr">${fmtNum(data.summary.total_amount)}</p></div>
+    <div style="padding:20px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 2px 8px rgba(15,23,42,0.06);"><p style="font-size:0.75rem;color:#64748b;margin:0 0 6px 0;font-weight:600;">الرسوم (Fees)</p><p style="font-size:1.3rem;font-weight:700;margin:0;" dir="ltr">${fmtNum(data.summary.sum_fees)}</p></div>
+    <div style="padding:20px;background:#fff;border:1px solid #e2e8f0;border-left:4px solid #026174;border-radius:12px;box-shadow:0 2px 8px rgba(15,23,42,0.06);"><p style="font-size:0.75rem;color:#64748b;margin:0 0 6px 0;font-weight:600;">عمولة التحصيل (ACQ)</p><p style="font-size:1.3rem;font-weight:700;margin:0;color:#026174;" dir="ltr">${fmtNum(data.summary.sum_acq)}</p></div>
+  </div>
+</section>`;
+
+  const byDaySorted = [...(data.by_day || [])].sort((a, b) => (a.sttl_date || '').localeCompare(b.sttl_date || ''));
+  const daysWithAcq = byDaySorted.map((d) => ({ date: d.sttl_date, acq: Number(d.sum_acq) || 0 }));
+  const dailyAvgAcq = daysWithAcq.length ? daysWithAcq.reduce((s, d) => s + d.acq, 0) / daysWithAcq.length : 0;
+  const byAcqDesc = [...daysWithAcq].sort((a, b) => b.acq - a.acq);
+  const peakDays = byAcqDesc.slice(0, 5);
+  const lowDays = [...byAcqDesc].reverse().slice(0, 5);
+  const daysAboveAvg = daysWithAcq.filter((d) => d.acq > dailyAvgAcq);
+  const daysBelowAvg = daysWithAcq.filter((d) => d.acq < dailyAvgAcq && d.acq > 0);
+  const byBankForTop = [...(data.by_bank || [])].sort((a, b) => (Number(b.sum_acq) || 0) - (Number(a.sum_acq) || 0));
+  const topBanks = byBankForTop.slice(0, 3);
+  const dirGovList = [...(data.by_directorate_governorate || [])].sort((a, b) => (Number(b.sum_acq) || 0) - (Number(a.sum_acq) || 0));
+  const topDirectorates = dirGovList.slice(0, 3);
+
+  const narrativeInsights: string[] = [];
+  if (peakDays.length && peakDays[0].acq > 0) {
+    narrativeInsights.push(`بلغت عمولة التحصيل الحكومي (ACQ) ذروتها في يوم ${esc(fmtDate(peakDays[0].date))} بقيمة ${fmtNum(peakDays[0].acq)} دينار عراقي.`);
+  }
+  if (lowDays.length && dailyAvgAcq > 0) {
+    const lowest = lowDays.filter((d) => d.acq > 0)[0];
+    if (lowest) narrativeInsights.push(`سجّل يوم ${esc(fmtDate(lowest.date))} أدنى عمولة يومية بقيمة ${fmtNum(lowest.acq)} دينار.`);
+  }
+  if (daysWithAcq.length && dailyAvgAcq > 0) {
+    narrativeInsights.push(`بلغ المتوسط اليومي لعمولة التحصيل خلال الفترة ${fmtNum(dailyAvgAcq)} دينار، مع ${daysAboveAvg.length} يوماً فوق المتوسط و${daysBelowAvg.length} يوماً دونه.`);
+  }
+  if (topBanks.length && topBanks[0].bank_name) {
+    narrativeInsights.push(`تصدّر مصرف "${esc(topBanks[0].bank_name)}" قائمة المصارف من حيث عمولة التحصيل بإجمالي ${fmtNum(Number(topBanks[0].sum_acq) || 0)} دينار.`);
+  }
+  if (topDirectorates.length && topDirectorates[0].directorate_name) {
+    narrativeInsights.push(`أعلى المديريات مساهمةً في عمولة التحصيل: "${esc(topDirectorates[0].directorate_name)}" (${esc(topDirectorates[0].governorate)}) بإجمالي ${fmtNum(Number(topDirectorates[0].sum_acq) || 0)} دينار.`);
+  }
+  if (data.summary.total_movements > 0) {
+    narrativeInsights.push(`إجمالي الحركات خلال الفترة ${data.summary.total_movements.toLocaleString('ar-EG')} حركة، بإجمالي عمولة تحصيل ${fmtNum(totalAcq)} دينار.`);
+  }
+  const narrativeSection = `
+<section class="mb-10" style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(15,23,42,0.06);">
+  <h2 style="font-size:1.05rem;font-weight:700;color:#0f172a;margin:0 0 12px 0;padding-bottom:8px;border-bottom:2px solid #026174;text-align:center;">تحليل التقرير</h2>
+  <p style="font-size:0.8rem;color:#475569;margin:0 0 10px 0;">ملاحظات تحليلية مستخرجة من بيانات الفترة:</p>
+  <ul style="margin:0;padding-right:20px;font-size:0.9rem;line-height:1.8;color:#334155;">
+    ${narrativeInsights.length ? narrativeInsights.map((text) => `<li>${text}</li>`).join('') : '<li>لا توجد بيانات كافية لاستخراج ملاحظات تحليلية لهذه الفترة.</li>'}
+  </ul>
+</section>`;
+  const maxAcqDay = Math.max(...byDaySorted.map((d) => Number(d.sum_acq) || 0), 1);
+  const chartHeight = 220;
+  const chartBars = byDaySorted.map((row, i) => {
+    const val = Number(row.sum_acq) || 0;
+    const pct = maxAcqDay ? (val / maxAcqDay) * 100 : 0;
+    return { label: fmtDate(row.sttl_date), value: val, pct };
+  });
+  const chartSvg = `
+<section class="mb-10">
+  <h2 style="font-size:1rem;font-weight:700;color:#0f172a;margin:0 0 12px 0;padding-bottom:8px;border-bottom:2px solid #026174;text-align:center;">مخطط عمولة التحصيل الحكومي (ACQ) باليوم</h2>
+  <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;min-height:260px;width:100%;">
+    <svg viewBox="0 0 800 ${chartHeight + 50}" style="width:100%;height:auto;max-height:280px;" dir="ltr">
+      ${chartBars.map((b, i) => {
+        const x = 50 + (i / Math.max(chartBars.length, 1)) * 700;
+        const barW = Math.max(4, 700 / Math.max(chartBars.length, 1) - 6);
+        const barH = (b.pct / 100) * chartHeight;
+        const y = chartHeight - barH + 20;
+        return `<g><rect x="${x}" y="${y}" width="${barW}" height="${barH}" fill="#026174" rx="4"/><text x="${x + barW/2}" y="${y - 6}" text-anchor="middle" font-size="11" fill="#334155">${Number(b.value).toLocaleString('en-US', { maximumFractionDigits: 0 })}</text><text x="${x + barW/2}" y="${chartHeight + 38}" text-anchor="middle" font-size="10" fill="#64748b">${b.label}</text></g>`;
+      }).join('')}
+    </svg>
+  </div>
+</section>`;
+
+  const byDayRows = byDaySorted.map((row, i) => {
+    const acqVal = Number(row.sum_acq) || 0;
+    const pct = totalAcq ? ((acqVal / totalAcq) * 100).toFixed(1) : '0';
+    return `
+    <tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};">
+      <td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${esc(fmtDate(row.sttl_date))}</td>
+      <td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${row.movement_count.toLocaleString('en-US')}</td>
+      <td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${fmtNum(row.sum_amount)}</td>
+      <td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${fmtNum(row.sum_fees)}</td>
+      <td style="padding:10px;text-align:right;border:1px solid #e2e8f0;font-weight:600;color:#0f766e;" dir="ltr">${fmtNum(row.sum_acq)}</td>
+      <td style="padding:10px;text-align:right;border:1px solid #e2e8f0;font-weight:600;color:#475569;" dir="ltr">${pct}%</td>
+    </tr>`;
+  }).join('');
+  const byDayTable = `
+<section class="mb-10">
+  <h2 style="font-size:1rem;font-weight:700;color:#0f172a;margin:0 0 12px 0;padding-bottom:8px;border-bottom:2px solid #026174;text-align:center;">تفصيل عمولة التحصيل (ACQ) باليوم</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:0.8rem;" dir="rtl">
+    <thead><tr class="table-header-dark" style="background:linear-gradient(135deg,#026174 0%,#068294 100%);color:#fff;"><th style="padding:10px;text-align:right;">التاريخ</th><th style="padding:10px;text-align:right;">عدد الحركات</th><th style="padding:10px;text-align:right;">إجمالي المبلغ</th><th style="padding:10px;text-align:right;">الرسوم</th><th style="padding:10px;text-align:right;">عمولة التحصيل (ACQ)</th><th style="padding:10px;text-align:right;">نسبة %</th></tr></thead>
+    <tbody>${byDayRows}</tbody>
+  </table>
+</section>`;
+
+  const byBankSorted = [...(data.by_bank || [])].sort((a, b) => (a.bank_name || '').localeCompare(b.bank_name || '', 'ar'));
+  const byBankRows = byBankSorted.map((row, i) => {
+    const acqVal = Number(row.sum_acq) || 0;
+    const pct = totalAcq ? ((acqVal / totalAcq) * 100).toFixed(1) : '0';
+    return `
+    <tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};"><td style="padding:10px;border:1px solid #e2e8f0;">${esc(row.bank_name)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${row.movement_count.toLocaleString('en-US')}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${fmtNum(row.sum_amount)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${fmtNum(row.sum_fees)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;font-weight:600;color:#0f766e;" dir="ltr">${fmtNum(row.sum_acq)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;font-weight:600;color:#475569;" dir="ltr">${pct}%</td></tr>`;
+  }).join('');
+  const byBankTable = `
+<section class="mb-10">
+  <h2 style="font-size:1rem;font-weight:700;color:#0f172a;margin:0 0 12px 0;padding-bottom:8px;border-bottom:2px solid #026174;text-align:center;">تفصيل حسب المصارف</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:0.8rem;" dir="rtl">
+    <thead><tr class="table-header-dark" style="background:linear-gradient(135deg,#026174 0%,#068294 100%);color:#fff;"><th style="padding:10px;text-align:right;">المصرف</th><th style="padding:10px;text-align:right;">عدد الحركات</th><th style="padding:10px;text-align:right;">إجمالي المبلغ</th><th style="padding:10px;text-align:right;">الرسوم</th><th style="padding:10px;text-align:right;">عمولة التحصيل (ACQ)</th><th style="padding:10px;text-align:right;">نسبة %</th></tr></thead>
+    <tbody>${byBankRows}</tbody>
+  </table>
+</section>`;
+
+  const dirGov = data.by_directorate_governorate && data.by_directorate_governorate.length > 0;
+  const dirGovRows = dirGov ? (data.by_directorate_governorate || []).map((row, i) => {
+    const acqVal = Number(row.sum_acq) || 0;
+    const pct = totalAcq ? ((acqVal / totalAcq) * 100).toFixed(1) : '0';
+    return `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};"><td style="padding:10px;border:1px solid #e2e8f0;">${esc(row.governorate)}</td><td style="padding:10px;border:1px solid #e2e8f0;">${esc(row.directorate_name)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${row.movement_count.toLocaleString('en-US')}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${fmtNum(row.sum_amount)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${fmtNum(row.sum_acq)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${pct}%</td></tr>`;
+  }).join('') : '';
+  const dirGovTable = dirGov ? `
+<section class="mb-10">
+  <h2 style="font-size:1rem;font-weight:700;color:#0f172a;margin:0 0 12px 0;padding-bottom:8px;border-bottom:2px solid #026174;text-align:center;">حسب المديرية والمحافظة</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:0.8rem;" dir="rtl">
+    <thead><tr class="table-header-dark" style="background:linear-gradient(135deg,#026174 0%,#068294 100%);color:#fff;"><th style="padding:10px;text-align:right;">المحافظة</th><th style="padding:10px;text-align:right;">المديرية</th><th style="padding:10px;text-align:right;">عدد الحركات</th><th style="padding:10px;text-align:right;">إجمالي المبلغ</th><th style="padding:10px;text-align:right;">عمولة التحصيل</th><th style="padding:10px;text-align:right;">نسبة %</th></tr></thead>
+    <tbody>${dirGovRows}</tbody>
+  </table>
+</section>` : '';
+
+  const ctRows = (data.ct_records || []).length === 0
+    ? '<tr><td colspan="7" style="text-align:center;padding:24px;color:#64748b;">لا يوجد سجل CT لهذه الفترة</td></tr>'
+    : [...data.ct_records].sort((a, b) => (b.sttl_date_from || '').localeCompare(a.sttl_date_from || '') || (b.created_at || '').localeCompare(a.created_at || '')).map((r) => `
+    <tr style="background:#fff;"><td style="padding:10px;border:1px solid #e2e8f0;" dir="ltr">${esc(fmtDate(r.sttl_date_from))}</td><td style="padding:10px;border:1px solid #e2e8f0;" dir="ltr">${esc(fmtDate(r.sttl_date_to))}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;font-weight:600;" dir="ltr">${fmtNum(r.ct_value)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;font-weight:600;color:#0f766e;" dir="ltr">${fmtNum(r.sum_acq)}</td><td style="padding:10px;border:1px solid #e2e8f0;"><span style="padding:4px 10px;border-radius:9999px;font-size:0.75rem;font-weight:700;${r.match_status === 'matched' ? 'background:#dcfce7;color:#166534;' : 'background:#fef3c7;color:#92400e;'}">${r.match_status === 'matched' ? 'مطابق' : 'غير مطابق'}</span></td><td style="padding:10px;border:1px solid #e2e8f0;">${esc(r.user_name ?? '—')}</td><td style="padding:10px;border:1px solid #e2e8f0;" dir="ltr">${esc(fmtDate(r.created_at))}</td></tr>`).join('');
+  const ctTable = `
+<section class="mb-10">
+  <h2 style="font-size:1rem;font-weight:700;color:#0f172a;margin:0 0 12px 0;padding-bottom:8px;border-bottom:2px solid #026174;text-align:center;">المطابقة (CT مقابل عمولة التحصيل الحكومي)</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:0.8rem;" dir="rtl">
+    <thead><tr class="table-header-dark" style="background:linear-gradient(135deg,#026174 0%,#068294 100%);color:#fff;"><th style="padding:10px;text-align:right;">من تاريخ</th><th style="padding:10px;text-align:right;">إلى تاريخ</th><th style="padding:10px;text-align:right;">قيمة CT</th><th style="padding:10px;text-align:right;">عمولة التحصيل</th><th style="padding:10px;text-align:right;">الحالة</th><th style="padding:10px;text-align:right;">المستخدم</th><th style="padding:10px;text-align:right;">تاريخ الإدخال</th></tr></thead>
+    <tbody>${ctRows}</tbody>
+  </table>
+</section>`;
+
+  return `<div class="ct-report-content" style="display:block;padding:0;max-width:100%;min-height:100vh;background:#fff;"><article style="display:block;padding:16px 10px 32px;background:#f6fafb;color:#0f172a;-webkit-print-color-adjust:exact;print-color-adjust:exact;border-radius:0;max-width:100%;width:100%;">${head}${stampBlock}${kpi}${narrativeSection}${chartSvg}${byDayTable}${byBankTable}${dirGovTable}${ctTable}</article></div>`;
+}
+
 /** صنف موحد لحقل التاريخ — متناسق مع التصميم */
 const dateInputClass = 'ds-input w-full py-2.5 pl-4 pr-11 [&::-webkit-calendar-picker-indicator]:opacity-0 [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:w-full [&::-webkit-calendar-picker-indicator]:cursor-pointer';
 const dateInputWrapperClass = 'relative flex items-center rounded-xl overflow-hidden border border-slate-200 focus-within:border-[var(--primary-600)] focus-within:ring-2 focus-within:ring-[var(--primary-600)]/20 focus-within:outline-none transition-all';
@@ -153,8 +333,13 @@ export function CtMatching() {
       const params = new URLSearchParams({ sttl_date_from: sttlDateFrom, sttl_date_to: sttlDateTo });
       const res = await api.get(`/rtgs/acq-fees-summary?${params.toString()}`);
       setSummary(res.data);
-    } catch {
+    } catch (e: unknown) {
       setSummary(null);
+      const err = e as { response?: { status?: number; data?: { error?: string } } };
+      const msg = err.response?.data?.error;
+      if (msg && err.response?.status === 500) {
+        toast({ title: 'خطأ في الجلب', description: msg, variant: 'destructive' });
+      }
     } finally {
       setSummaryLoading(false);
     }
@@ -170,8 +355,13 @@ export function CtMatching() {
       }
       const res = await api.get(`/rtgs/ct-records?${params.toString()}`);
       setRecords(res.data?.data ?? []);
-    } catch {
+    } catch (e: unknown) {
       setRecords([]);
+      const err = e as { response?: { status?: number; data?: { error?: string } } };
+      const msg = err.response?.data?.error;
+      if (msg && err.response?.status === 500) {
+        toast({ title: 'خطأ في الجلب', description: msg, variant: 'destructive' });
+      }
     } finally {
       setRecordsLoading(false);
     }
@@ -231,9 +421,15 @@ export function CtMatching() {
     api.get(`/rtgs/ct-matching-report?${params.toString()}`)
       .then((res) => {
         setReportData(res.data);
+        const hint = (res.data as { _message?: string })?._message;
+        if (hint) {
+          toast({ title: 'تنبيه', description: hint, variant: 'default' });
+        }
       })
-      .catch(() => {
-        toast({ title: 'خطأ', description: 'فشل جلب بيانات التقرير', variant: 'destructive' });
+      .catch((e: unknown) => {
+        const err = e as { response?: { data?: { error?: string } } };
+        const msg = err.response?.data?.error ?? 'فشل جلب بيانات التقرير';
+        toast({ title: 'خطأ', description: msg, variant: 'destructive' });
         setReportOpen(false);
       })
       .finally(() => setReportLoading(false));
@@ -259,38 +455,21 @@ export function CtMatching() {
   }, [reportOpen]);
 
   const printReportWindow = () => {
-    const el = reportContentRef.current ?? document.querySelector<HTMLDivElement>('#ct-matching-report-print .ct-report-content');
-    if (!el) {
-      window.print();
-      return;
-    }
     const origin = window.location.origin;
-    let html = el.innerHTML.trim();
-    if (!html || html.length < 100) {
-      window.print();
-      return;
-    }
-    html = html.replace(/src="\//g, `src="${origin}/`);
-    const printWin = window.open('', '_blank', 'noopener,noreferrer');
-    if (!printWin) {
-      window.print();
-      return;
-    }
     const styles = `
-      @page { size: A4; margin: 15mm 0; }
+      @page { size: A4; margin: 10mm 8mm; }
       *, *::before, *::after { box-sizing: border-box; }
-      body { margin: 0; padding: 16px 0; font-family: 'Cairo', 'Segoe UI', sans-serif; direction: rtl; font-size: 14px; color: #0f172a; background: #fff; line-height: 1.5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      .ct-report-content { max-width: 100%; padding: 0; margin: 0; }
+      html, body { margin: 0; padding: 0; width: 100%; min-height: 100%; font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; direction: rtl; font-size: 14px; color: #0f172a !important; background: #fff !important; line-height: 1.5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      body { padding: 0; }
+      .ct-report-content { max-width: 100%; padding: 0; margin: 0; display: block !important; min-height: 100vh; background: #fff !important; }
       article { padding: 0; margin: 0; overflow: visible; }
       .report-print-header { background: linear-gradient(135deg, #026174 0%, #068294 100%) !important; padding: 20px 24px; margin-bottom: 24px; border-radius: 12px; }
       .report-print-header h1, .report-print-header p, .report-print-header span { color: #ffffff !important; text-shadow: 0 1px 2px rgba(0,0,0,0.2); }
       .report-print-period { background: rgba(255,255,255,0.2) !important; border: 1px solid rgba(255,255,255,0.4); padding: 12px 20px; font-weight: 600; color: #ffffff !important; font-size: 0.9rem; border-radius: 6px; margin-top: 12px; }
-      section { margin-bottom: 28px; page-break-inside: avoid; overflow: visible; }
-      section h2 { page-break-after: avoid; }
-      section div { overflow: visible; border-radius: 0; }
-      section h2 { font-size: 1rem; font-weight: 700; color: #0f172a; margin: 0 0 12px 0; padding-bottom: 8px; border-bottom: 2px solid #026174; }
-      table { width: 100%; border-collapse: collapse; direction: rtl; table-layout: fixed; font-size: 0.8rem; page-break-inside: auto; }
-      th, td { min-width: 0; box-sizing: border-box; }
+      section { margin-bottom: 24px; overflow: visible; }
+      section h2 { page-break-after: avoid; font-size: 1rem; font-weight: 700; color: #0f172a; margin: 0 0 12px 0; padding-bottom: 8px; border-bottom: 2px solid #026174; text-align: center; }
+      table { width: 100%; border-collapse: collapse; direction: rtl; table-layout: auto; font-size: 0.8rem; page-break-inside: auto; }
+      th, td { min-width: 0; box-sizing: border-box; padding: 8px 6px; text-align: right; vertical-align: middle; border: 1px solid #e2e8f0; color: #334155; }
       table.print-cols-5 th:nth-child(1), table.print-cols-5 td:nth-child(1) { width: 20%; }
       table.print-cols-5 th:nth-child(2), table.print-cols-5 td:nth-child(2) { width: 20%; }
       table.print-cols-5 th:nth-child(3), table.print-cols-5 td:nth-child(3) { width: 20%; }
@@ -303,35 +482,55 @@ export function CtMatching() {
       table.print-cols-7 th:nth-child(5), table.print-cols-7 td:nth-child(5) { width: 14.29%; }
       table.print-cols-7 th:nth-child(6), table.print-cols-7 td:nth-child(6) { width: 14.29%; }
       table.print-cols-7 th:nth-child(7), table.print-cols-7 td:nth-child(7) { width: 14.26%; }
-      table.print-cols-5 col:nth-child(1) { width: 20%; } table.print-cols-5 col:nth-child(2) { width: 20%; } table.print-cols-5 col:nth-child(3) { width: 20%; } table.print-cols-5 col:nth-child(4) { width: 20%; } table.print-cols-5 col:nth-child(5) { width: 20%; }
-      table.print-cols-7 col:nth-child(1) { width: 14.29%; } table.print-cols-7 col:nth-child(2) { width: 14.29%; } table.print-cols-7 col:nth-child(3) { width: 14.29%; } table.print-cols-7 col:nth-child(4) { width: 14.29%; } table.print-cols-7 col:nth-child(5) { width: 14.29%; } table.print-cols-7 col:nth-child(6) { width: 14.29%; } table.print-cols-7 col:nth-child(7) { width: 14.26%; }
       thead { display: table-header-group; }
-      thead tr, .report-table-head, .table-header-dark { display: table-row; background: linear-gradient(135deg, #026174 0%, #068294 100%) !important; }
-      thead th, .report-table-head th, .table-header-dark th { display: table-cell; padding: 10px; text-align: right; vertical-align: middle; font-weight: 700; color: #ffffff !important; background: linear-gradient(135deg, #026174 0%, #068294 100%) !important; border: 1px solid rgba(255,255,255,0.2); font-size: 0.85rem; text-shadow: 0 1px 2px rgba(0,0,0,0.2); }
-      tbody td { display: table-cell; }
-      tbody tr { page-break-inside: avoid; }
+      thead tr, .table-header-dark { background: linear-gradient(135deg, #026174 0%, #068294 100%) !important; color: #fff !important; }
+      thead th { font-weight: 700; color: #ffffff !important; background: linear-gradient(135deg, #026174 0%, #068294 100%) !important; border: 1px solid rgba(255,255,255,0.2); font-size: 0.85rem; }
+      tbody tr { page-break-inside: auto; }
       tbody tr:nth-child(even) { background: #f8fafc; }
-      tbody td { padding: 10px; text-align: right; vertical-align: middle; border: 1px solid #e2e8f0; color: #334155; writing-mode: horizontal-tb; word-break: normal; white-space: normal; line-height: 1.4; min-height: 36px; }
-      tbody td[dir="ltr"] { direction: ltr; text-align: right; }
-      footer { margin-top: 32px; padding-top: 20px; border-top: 2px solid #cbd5e1; page-break-inside: avoid; display: flex; justify-content: flex-end; direction: rtl; }
-      footer p { display: none !important; }
-      footer img { margin-right: auto; margin-left: 0; }
-      img { max-width: 100%; height: auto; }
-      article > div { background: #f6fafb !important; }
-      [style*="border: 2px solid var(--border-card)"] { border-color: #cbd5e1 !important; }
-      [style*="border:2px solid var(--border-card)"] { border-color: #cbd5e1 !important; }
+      td[dir="ltr"] { direction: ltr; }
     `;
-    printWin.document.open();
-    printWin.document.write(
-      `<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><base href="${origin}/"><title> </title><style>${styles}</style></head><body></body></html>`
-    );
-    printWin.document.close();
-    printWin.document.body.innerHTML = html;
+    const html = reportData
+      ? buildReportPrintHtml(reportData, formatNum, formatDate, origin)
+      : (() => {
+          const el = reportContentRef.current ?? document.querySelector<HTMLDivElement>('#ct-matching-report-print .ct-report-content');
+          if (!el) return '';
+          let h = el.innerHTML.trim();
+          if (h && h.length > 100) h = h.replace(/src="\//g, `src="${origin}/`);
+          return h;
+        })();
+    if (!html || html.length < 50) {
+      window.print();
+      return;
+    }
+    const fullDoc = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><base href="${origin}/"><title>مطابقة حوالة عمولات واردة من البنك المركزي</title><style>${styles}</style></head><body style="margin:0;padding:0 8px;background:#fff;color:#0f172a;font-family:'Segoe UI',Tahoma,sans-serif;font-size:14px;direction:rtl;">${html}</body></html>`;
+    const blob = new Blob([fullDoc], { type: 'text/html;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+    const printWin = window.open(blobUrl, '_blank', 'noopener,noreferrer');
+    if (!printWin) {
+      URL.revokeObjectURL(blobUrl);
+      window.print();
+      return;
+    }
     printWin.focus();
+    let printed = false;
+    const doPrint = () => {
+      if (printed) return;
+      printed = true;
+      try {
+        printWin.print();
+        printWin.onafterprint = () => {
+          URL.revokeObjectURL(blobUrl);
+          printWin.close();
+        };
+      } catch {
+        URL.revokeObjectURL(blobUrl);
+        printWin.close();
+      }
+    };
+    printWin.addEventListener('load', () => setTimeout(doPrint, 400));
     setTimeout(() => {
-      printWin.print();
-      printWin.onafterprint = () => printWin.close();
-    }, 500);
+      if (!printed && !printWin.closed && printWin.document?.readyState === 'complete') doPrint();
+    }, 1500);
   };
 
   const openEditModal = (r: CtRecord) => {
@@ -882,7 +1081,7 @@ export function CtMatching() {
                               <img src="/logo.png" alt="شعار الشركة" className="max-h-full max-w-full object-contain" />
                             </div>
                             <div>
-                              <h1 className="text-2xl sm:text-3xl font-extrabold m-0 tracking-tight text-white">تقرير مطابقة CT</h1>
+                              <h1 className="text-2xl sm:text-3xl font-extrabold m-0 tracking-tight text-white">مطابقة حوالة عمولات واردة من البنك المركزي</h1>
                               <p className="text-white/95 mt-2 m-0 text-base font-semibold">شركة الساقي لخدمات الدفع الإلكتروني</p>
                               <p className="text-white/90 font-bold mt-0.5 m-0 text-sm">قسم التسويات والمطابقات</p>
                             </div>
@@ -891,6 +1090,7 @@ export function CtMatching() {
                             <span className="text-white">فترة التسوية: <span className="font-bold" dir="ltr">{formatDate(reportData.period.sttl_date_from)} — {formatDate(reportData.period.sttl_date_to)}</span></span>
                             <span className="text-white/95" dir="ltr">تاريخ الإصدار: {new Date().toLocaleDateString('ar-IQ', { year: 'numeric', month: 'long', day: 'numeric' })}</span>
                           </div>
+                          <p className="text-white/90 text-xs mt-3 mb-0">مصدر البيانات: جدول تفاصيل/ملخص التسوية (ملخص حركات RTGS — يقلل الاستهلاك ومشاكل النظام)</p>
                         </header>
 
                         {/* مؤشرات الأداء (KPI) — نفس تصميم KPI Cards */}

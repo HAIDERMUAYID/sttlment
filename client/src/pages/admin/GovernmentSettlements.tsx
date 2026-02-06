@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { motion, AnimatePresence } from 'framer-motion';
+import * as XLSX from 'xlsx';
 import {
   Banknote,
   Calendar,
@@ -142,6 +143,20 @@ export function GovernmentSettlements() {
   const [detailsSettlement, setDetailsSettlement] = useState<{ sttl_date: string | null; bank_display_name: string | null } | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsRows, setDetailsRows] = useState<Array<{ iban: string; ministry_directorate_governorate: string; account_number: string; branch_name: string; branch_number: string; movement_count: number; sum_amount: number; sum_fees: number; sum_acq: number; sum_sttle: number }>>([]);
+  /** إجماليات تفاصيل التسوية (للجدول والطباعة و Excel) */
+  const detailsTotals = useMemo(() => {
+    if (!detailsRows.length) return { movement_count: 0, sum_amount: 0, sum_fees: 0, sum_acq: 0, sum_sttle: 0 };
+    return detailsRows.reduce(
+      (acc, r) => ({
+        movement_count: acc.movement_count + (r.movement_count || 0),
+        sum_amount: acc.sum_amount + (r.sum_amount || 0),
+        sum_fees: acc.sum_fees + (r.sum_fees || 0),
+        sum_acq: acc.sum_acq + (r.sum_acq || 0),
+        sum_sttle: acc.sum_sttle + (r.sum_sttle || 0),
+      }),
+      { movement_count: 0, sum_amount: 0, sum_fees: 0, sum_acq: 0, sum_sttle: 0 }
+    );
+  }, [detailsRows]);
   const detailContentRef = useRef<HTMLDivElement>(null);
   const printAreaRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
@@ -167,8 +182,8 @@ export function GovernmentSettlements() {
   }, [detailsSettlement?.sttl_date, detailsSettlement?.bank_display_name, toast]);
 
   useEffect(() => {
-    api.get('/rtgs/filter-options').then((res) => {
-      setBankOptions(res.data?.bankDisplayNameList ?? []);
+    api.get('/rtgs/bank-names').then((res) => {
+      setBankOptions(Array.isArray(res.data) ? res.data : []);
     }).catch(() => {});
   }, []);
 
@@ -283,30 +298,65 @@ export function GovernmentSettlements() {
     }
   };
 
-  const handleExport = () => {
-    if (data.length === 0) {
-      toast({ title: 'لا يوجد بيانات', description: 'لا توجد صفوف للتصدير', variant: 'destructive' });
-      return;
+  const [exporting, setExporting] = useState(false);
+  /** جلب كل البيانات (كل الصفحات) ثم تصديرها — لا يُصدَّر فقط الصفحة الحالية */
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const limitPerPage = 500;
+      const allData: SettlementByTranDateRow[] = [];
+      let page = 1;
+      let totalPages = 1;
+      do {
+        const query: Record<string, string> = {
+          page: String(page),
+          limit: String(limitPerPage),
+          sttl_date_from: filters.sttl_date_from || '',
+          sttl_date_to: filters.sttl_date_to || '',
+          bank_display_name: filters.bank_display_name || '',
+        };
+        const params = new URLSearchParams(query);
+        const res = await api.get(`/rtgs/government-settlements-by-transaction-date?${params.toString()}`);
+        const chunk: SettlementByTranDateRow[] = res.data?.data ?? [];
+        allData.push(...chunk);
+        totalPages = res.data?.pagination?.totalPages ?? 1;
+        page++;
+      } while (page <= totalPages);
+
+      if (allData.length === 0) {
+        toast({
+          title: 'لا يوجد بيانات للتصدير',
+          description: 'لا توجد صفوف مطابقة للفلاتر الحالية (التاريخ / المصرف). جرّب توسيع نطاق التاريخ أو إلغاء الفلاتر ثم «تطبيق الفلاتر» لتحميل كل البيانات واضغط تصدير مرة أخرى.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      const headers = ['تاريخ التسوية', 'المصرف', 'تاريخ الحركة', 'عدد الحركات', 'قيمة الحركات (IQD)', 'قيمة العمولة (IQD)', 'عمولة المحصل (IQD)', 'قيمة التسوية (IQD)'];
+      const rows = allData.map((r) => [
+        formatDate(r.sttl_date),
+        r.bank_name ?? r.inst_id2 ?? '—',
+        formatDate(r.transaction_date),
+        String(r.movement_count),
+        formatNum(r.sum_amount),
+        formatNum(r.sum_fees),
+        formatNum(r.sum_acq),
+        formatNum(r.sum_sttle),
+      ]);
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      XLSX.utils.book_append_sheet(wb, ws, 'التسويات الحكومية');
+      XLSX.writeFile(wb, `تسويات_حكومية_${filters.sttl_date_from || 'كل'}_${filters.sttl_date_to || 'التواريخ'}.xlsx`);
+      toast({ title: 'تم التصدير', description: `تم تحميل Excel بكل البيانات (${allData.length.toLocaleString('ar-EG')} صف)` });
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      toast({
+        title: 'فشل التصدير',
+        description: err.response?.data?.error ?? 'لم يتم جلب كل البيانات للتصدير',
+        variant: 'destructive',
+      });
+    } finally {
+      setExporting(false);
     }
-    const headers = ['تاريخ التسوية', 'المصرف', 'تاريخ الحركة', 'عدد الحركات', 'قيمة الحركات (IQD)', 'قيمة العمولة (IQD)', 'عمولة المحصل (IQD)', 'قيمة التسوية (IQD)'];
-    const rows = data.map((r) => [
-      formatDate(r.sttl_date),
-      r.bank_name ?? r.inst_id2 ?? '—',
-      formatDate(r.transaction_date),
-      String(r.movement_count),
-      formatNum(r.sum_amount),
-      formatNum(r.sum_fees),
-      formatNum(r.sum_acq),
-      formatNum(r.sum_sttle),
-    ]);
-    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `تسويات_حكومية_${filters.sttl_date_from || 'كل'}_${filters.sttl_date_to || 'التواريخ'}.csv`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-    toast({ title: 'تم التصدير', description: 'تم تحميل ملف CSV' });
   };
 
   const handlePrint = () => {
@@ -438,11 +488,12 @@ export function GovernmentSettlements() {
               <button
                 type="button"
                 onClick={handleExport}
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm font-medium bg-white/15 hover:bg-white/25 text-white border border-white/30 transition-colors"
-                title="تصدير البيانات الحالية إلى CSV"
+                disabled={exporting}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm font-medium bg-white/15 hover:bg-white/25 text-white border border-white/30 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
+                title="تصدير كل البيانات (كل الصفحات) إلى Excel"
               >
-                <FileDown className="w-4 h-4" />
-                تصدير
+                <FileDown className={`w-4 h-4 ${exporting ? 'animate-pulse' : ''}`} />
+                {exporting ? 'جاري التصدير...' : 'تصدير'}
               </button>
               <button
                 type="button"
@@ -499,33 +550,6 @@ export function GovernmentSettlements() {
             >
               <X className="w-4 h-4" />
               إلغاء الفلاتر
-            </button>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 mb-4">
-            <span className="text-xs font-medium text-slate-500">عرض سريع:</span>
-            <button
-              type="button"
-              onClick={() => { setFilters((p) => ({ ...p, sttl_date_from: yesterdayStr, sttl_date_to: yesterdayStr })); setPagination((p) => ({ ...p, page: 1 })); }}
-              className="px-3 py-2 rounded-lg text-sm font-medium border-2 transition-colors"
-              style={{ borderColor: filters.sttl_date_from === yesterdayStr ? 'var(--primary-600)' : 'var(--border)', background: filters.sttl_date_from === yesterdayStr ? 'rgba(6, 130, 148, 0.1)' : '#fff', color: filters.sttl_date_from === yesterdayStr ? 'var(--primary-700)' : 'var(--text)' }}
-            >
-              اليوم السابق
-            </button>
-            <button
-              type="button"
-              onClick={() => { setFilters((p) => ({ ...p, sttl_date_from: todayStr, sttl_date_to: todayStr })); setPagination((p) => ({ ...p, page: 1 })); }}
-              className="px-3 py-2 rounded-lg text-sm font-medium border-2 transition-colors"
-              style={{ borderColor: filters.sttl_date_from === todayStr ? 'var(--primary-600)' : 'var(--border)', background: filters.sttl_date_from === todayStr ? 'rgba(6, 130, 148, 0.1)' : '#fff', color: filters.sttl_date_from === todayStr ? 'var(--primary-700)' : 'var(--text)' }}
-            >
-              اليوم
-            </button>
-            <button
-              type="button"
-              onClick={() => { setFilters((p) => ({ ...p, sttl_date_from: '', sttl_date_to: '' })); setPagination((p) => ({ ...p, page: 1 })); }}
-              className="px-3 py-2 rounded-lg text-sm font-medium border-2 transition-colors"
-              style={{ borderColor: !filters.sttl_date_from && !filters.sttl_date_to ? 'var(--primary-600)' : 'var(--border)', background: !filters.sttl_date_from && !filters.sttl_date_to ? 'rgba(6, 130, 148, 0.1)' : '#fff', color: !filters.sttl_date_from && !filters.sttl_date_to ? 'var(--primary-700)' : 'var(--text)' }}
-            >
-              كل التواريخ
             </button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
@@ -818,16 +842,174 @@ export function GovernmentSettlements() {
         {/* نافذة تفاصيل التسوية (IBAN، وزارة/مديرية/محافظة، فرع، حركات، عمولة، مبلغ) */}
         <Dialog open={!!detailsSettlement} onOpenChange={(open) => { if (!open) setDetailsSettlement(null); }}>
           <DialogContent className="max-w-[95vw] w-full max-h-[95vh] overflow-hidden flex flex-col rounded-2xl">
-            <DialogHeader className="p-6 pb-4 border-b flex-shrink-0" style={{ borderColor: 'var(--border-card)' }}>
+            <DialogHeader className="p-6 pb-4 border-b flex-shrink-0 flex-row justify-between items-center gap-4 flex-wrap" style={{ borderColor: 'var(--border-card)' }}>
               <DialogTitle className="text-xl font-bold" style={{ color: 'var(--text-strong)' }}>
                 تفاصيل التسوية — {formatDate(detailsSettlement?.sttl_date ?? null)} {detailsSettlement?.bank_display_name ? ` / ${detailsSettlement.bank_display_name}` : ''}
               </DialogTitle>
+              {detailsRows.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const title = `تفاصيل التسوية — ${formatDate(detailsSettlement?.sttl_date ?? null)}${detailsSettlement?.bank_display_name ? ` / ${detailsSettlement.bank_display_name}` : ''}`;
+                      const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=900,height=700');
+                      if (!printWindow) {
+                        toast({
+                          title: 'لم تفتح نافذة الطباعة',
+                          description: 'المرجو السماح بالنوافذ المنبثقة لهذا الموقع ثم جرّب مرة أخرى، أو استخدم تصدير Excel ثم اطبع الملف.',
+                          variant: 'destructive',
+                        });
+                        return;
+                      }
+                      const rowsHtml = detailsRows.map((row) => `
+                        <tr>
+                          <td class="py-2 px-3 font-mono text-xs" dir="ltr">${(row.iban || '—').replace(/</g, '&lt;')}</td>
+                          <td class="py-2 px-3 max-w-[220px]">${(row.ministry_directorate_governorate || '—').replace(/</g, '&lt;')}</td>
+                          <td class="py-2 px-3" dir="ltr">${(row.account_number || '—').replace(/</g, '&lt;')}</td>
+                          <td class="py-2 px-3">${(row.branch_name || '—').replace(/</g, '&lt;')}</td>
+                          <td class="py-2 px-3" dir="ltr">${(row.branch_number || '—').replace(/</g, '&lt;')}</td>
+                          <td class="py-2 px-3 tabular-nums" dir="ltr">${row.movement_count.toLocaleString('en-US')}</td>
+                          <td class="py-2 px-3 tabular-nums" dir="ltr">${formatNum(row.sum_amount)}</td>
+                          <td class="py-2 px-3 tabular-nums" dir="ltr">${formatNum(row.sum_fees)}</td>
+                          <td class="py-2 px-3 tabular-nums" dir="ltr">${formatNum(row.sum_acq)}</td>
+                          <td class="py-2 px-3 font-bold tabular-nums" dir="ltr">${formatNum(row.sum_sttle)}</td>
+                        </tr>`).join('');
+                      const totalsHtml = `
+                        <tr style="background: linear-gradient(135deg, #026174 0%, #068294 100%); font-weight: bold; color: #fff;">
+                          <td colspan="5" class="py-3 px-3 text-end">المجموع</td>
+                          <td class="py-3 px-3 tabular-nums" dir="ltr">${detailsTotals.movement_count.toLocaleString('en-US')}</td>
+                          <td class="py-3 px-3 tabular-nums" dir="ltr">${formatNum(detailsTotals.sum_amount)}</td>
+                          <td class="py-3 px-3 tabular-nums" dir="ltr">${formatNum(detailsTotals.sum_fees)}</td>
+                          <td class="py-3 px-3 tabular-nums" dir="ltr">${formatNum(detailsTotals.sum_acq)}</td>
+                          <td class="py-3 px-3 tabular-nums" dir="ltr">${formatNum(detailsTotals.sum_sttle)}</td>
+                        </tr>`;
+                      printWindow.document.write(`
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+  <meta charset="utf-8">
+  <title>${title.replace(/</g, '&lt;')}</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; padding: 24px; color: #1e293b; }
+    h1 { font-size: 1.25rem; margin: 0 0 16px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { padding: 8px 12px; text-align: right; border: 1px solid #e2e8f0; }
+    th { background: linear-gradient(135deg, #026174 0%, #068294 100%); color: #fff; font-weight: bold; }
+    .tabular-nums { font-variant-numeric: tabular-nums; }
+    @media print { body { padding: 12px; } }
+  </style>
+</head>
+<body>
+  <h1>${title.replace(/</g, '&lt;')}</h1>
+  <table>
+    <thead>
+      <tr>
+        <th>IBAN</th>
+        <th>الوزارة / المديرية / المحافظة</th>
+        <th>رقم الحساب</th>
+        <th>اسم الفرع</th>
+        <th>رقم الفرع</th>
+        <th>عدد الحركات</th>
+        <th>قيمة الحركات</th>
+        <th>العمولة</th>
+        <th>عمولة المحصل</th>
+        <th>مبلغ التسوية</th>
+      </tr>
+    </thead>
+    <tbody>${rowsHtml}${totalsHtml}
+    </tbody>
+  </table>
+</body>
+</html>`);
+                      printWindow.document.close();
+                      printWindow.focus();
+                      const doPrint = () => {
+                        try {
+                          printWindow.print();
+                        } finally {
+                          if (typeof printWindow.onafterprint !== 'undefined') {
+                            printWindow.onafterprint = () => printWindow.close();
+                          } else {
+                            setTimeout(() => printWindow.close(), 500);
+                          }
+                        }
+                      };
+                      if (printWindow.document.readyState === 'complete') {
+                        doPrint();
+                      } else {
+                        printWindow.onload = doPrint;
+                      }
+                    }}
+                    className="ds-btn ds-btn-outline inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm"
+                  >
+                    <Printer className="w-4 h-4" />
+                    طباعة
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const headers = ['IBAN', 'الوزارة / المديرية / المحافظة', 'رقم الحساب', 'اسم الفرع', 'رقم الفرع', 'عدد الحركات', 'قيمة الحركات', 'العمولة', 'عمولة المحصل', 'مبلغ التسوية'];
+                      const rows = detailsRows.map((r) => [
+                        r.iban || '—',
+                        r.ministry_directorate_governorate || '—',
+                        r.account_number || '—',
+                        r.branch_name || '—',
+                        r.branch_number || '—',
+                        r.movement_count,
+                        r.sum_amount,
+                        r.sum_fees,
+                        r.sum_acq,
+                        r.sum_sttle,
+                      ]);
+                      rows.push(['المجموع', '', '', '', '', detailsTotals.movement_count, detailsTotals.sum_amount, detailsTotals.sum_fees, detailsTotals.sum_acq, detailsTotals.sum_sttle]);
+                      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+                      const wb = XLSX.utils.book_new();
+                      const sheetName = `تفاصيل_${(detailsSettlement?.sttl_date ?? '').slice(0, 10)}`;
+                      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+                      XLSX.writeFile(wb, `settlement_details_${(detailsSettlement?.sttl_date ?? '').slice(0, 10)}.xlsx`);
+                      toast({ title: 'تم التصدير', description: 'تم تنزيل ملف Excel بنجاح' });
+                    }}
+                    className="ds-btn ds-btn-outline inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm"
+                  >
+                    <FileDown className="w-4 h-4" />
+                    تصدير Excel
+                  </button>
+                </div>
+              )}
             </DialogHeader>
             <div className="p-6 overflow-auto flex-1 min-h-0">
               {detailsLoading ? (
                 <Loading message="جاري جلب التفاصيل..." />
               ) : detailsRows.length === 0 ? (
-                <p className="text-center text-slate-500">لا توجد تفاصيل مخزنة لهذه التسوية. قم بتعبئة الجدول أو استيراد ملف RTGS.</p>
+                <div className="flex flex-col items-center justify-center gap-4 py-8">
+                  <p className="text-center text-slate-600 m-0">لا توجد تفاصيل مخزنة لهذه التسوية (بما فيها التسويات القديمة).</p>
+                  <p className="text-center text-sm text-slate-500 m-0">تعبئة الجدول تنقل كل بيانات RTGS الحالية — بما فيها القديمة — إلى جدول التفاصيل.</p>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!detailsSettlement?.sttl_date || !detailsSettlement?.bank_display_name) return;
+                      setDetailsLoading(true);
+                      try {
+                        await api.post('/rtgs/backfill-gov-settlements');
+                        toast({ title: 'تمت التعبئة', description: 'تم تعبئة جدول التسويات والتفاصيل. جاري تحميل التفاصيل...' });
+                        const params = new URLSearchParams({ sttl_date: detailsSettlement.sttl_date, bank_display_name: detailsSettlement.bank_display_name });
+                        const res = await api.get(`/rtgs/government-settlement-details?${params.toString()}`);
+                        setDetailsRows(res.data?.details ?? []);
+                        fetchData();
+                      } catch (e: unknown) {
+                        const err = e as { response?: { data?: { error?: string } } };
+                        toast({ title: 'خطأ', description: err.response?.data?.error ?? 'فشل تعبئة الجدول', variant: 'destructive' });
+                      } finally {
+                        setDetailsLoading(false);
+                      }
+                    }}
+                    disabled={detailsLoading}
+                    className="ds-btn ds-btn-primary inline-flex items-center gap-2 px-5 py-2.5"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${detailsLoading ? 'animate-spin' : ''}`} />
+                    تعبئة الجدول الآن (التسويات القديمة + الحالية)
+                  </button>
+                </div>
               ) : (
                 <div className="overflow-x-auto rounded-xl border" style={{ borderColor: 'var(--border-card)' }}>
                   <table className="ds-table w-full text-sm" style={{ minWidth: '900px' }}>
@@ -861,6 +1043,16 @@ export function GovernmentSettlements() {
                         </tr>
                       ))}
                     </tbody>
+                    <tfoot>
+                      <tr className="font-bold" style={{ background: 'linear-gradient(135deg, #026174 0%, #068294 100%)', color: '#fff' }}>
+                        <td colSpan={5} className="py-3 px-3 text-end">المجموع</td>
+                        <td className="py-3 px-3 tabular-nums" dir="ltr">{detailsTotals.movement_count.toLocaleString('en-US')}</td>
+                        <td className="py-3 px-3 tabular-nums" dir="ltr">{formatNum(detailsTotals.sum_amount)}</td>
+                        <td className="py-3 px-3 tabular-nums" dir="ltr">{formatNum(detailsTotals.sum_fees)}</td>
+                        <td className="py-3 px-3 tabular-nums" dir="ltr">{formatNum(detailsTotals.sum_acq)}</td>
+                        <td className="py-3 px-3 tabular-nums" dir="ltr">{formatNum(detailsTotals.sum_sttle)}</td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               )}

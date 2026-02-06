@@ -9,6 +9,7 @@ if (envPath) require('dotenv').config({ path: envPath, override: true });
 
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const http = require('http');
 const helmet = require('helmet');
 const { apiLimiter } = require('./middleware/rateLimiter');
@@ -18,6 +19,9 @@ const server = http.createServer(app);
 
 // Trust proxy (لإصلاح مشكلة express-rate-limit)
 app.set('trust proxy', true);
+
+// ضغط الردود (Gzip) — يقلل حجم نقل JSON ويُسرّع التحميل في المتصفح
+app.use(compression());
 
 // Security middleware — السماح بخطوط Google واتصال نفس الدومين ونصوص مضمنة (React)
 app.use(helmet({
@@ -67,7 +71,8 @@ app.use('/api/audit-log', require('./routes/auditLog'));
 app.use('/api/merchants', require('./routes/merchants'));
 app.use('/api/merchant-disbursements', require('./routes/merchantDisbursements'));
 app.use('/api/rtgs', require('./routes/rtgs'));
-app.use('/api/uploads', express.static(path.join(process.cwd(), 'uploads')));
+const { getUploadsBase } = require('./utils/uploadPath');
+app.use('/api/uploads', express.static(getUploadsBase()));
 
 // فحص الصحة: لمعرفة إن كانت المشكلة من السيرفر أم من قاعدة البيانات
 app.get('/api/health', async (req, res) => {

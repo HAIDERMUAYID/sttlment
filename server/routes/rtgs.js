@@ -4,6 +4,7 @@ const multer = require('multer');
 const {
   getRtgs,
   getRtgsFilterOptions,
+  getRtgsBankNames,
   getSettlementMaps,
   getImportLogs,
   deleteImportLog,
@@ -51,6 +52,7 @@ router.use(authenticate);
 
 router.get('/', requirePermission('rtgs', 'view'), getRtgs);
 router.get('/filter-options', requirePermission('rtgs', 'view'), getRtgsFilterOptions);
+router.get('/bank-names', requirePermission('rtgs', 'view'), getRtgsBankNames);
 router.get('/settlement-maps', requirePermission('rtgs', 'view'), getSettlementMaps);
 router.get('/import-logs', requirePermission('rtgs', 'view_import_logs'), getImportLogs);
 router.delete('/import-logs/:id', requirePermission('rtgs', 'delete_import'), deleteImportLog);

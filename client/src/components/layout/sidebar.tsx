@@ -24,6 +24,7 @@ import {
   ImageOff,
   FileSpreadsheet,
   Banknote,
+  LayoutList,
   Calculator,
   Wallet,
 } from 'lucide-react';
@@ -58,6 +59,7 @@ const menuItems = [
     items: [
       { icon: FileSpreadsheet, label: 'RTGS', path: '/rtgs', pageKey: 'rtgs' },
       { icon: Banknote, label: 'التسويات الحكومية', path: '/government-settlements', pageKey: 'government_settlements' },
+      { icon: LayoutList, label: 'جدول تفاصيل التسويات', path: '/settlement-details', pageKey: 'government_settlements' },
       { icon: Calculator, label: 'مطابقة العمولات (CT)', path: '/ct-matching', pageKey: 'ct_matching' },
       { icon: Wallet, label: 'صرف مستحقات التجار', path: '/merchant-disbursements', pageKey: 'merchant_disbursements' },
       { icon: BarChart3, label: 'التقارير', path: '/reports', pageKey: 'reports' },
@@ -94,7 +96,7 @@ export function Sidebar() {
     items: section.items.filter((item) => {
       const pk = (item as { pageKey?: string }).pageKey;
       if (!pk) return true;
-      if (pk === 'change_password') return true; // متاح للجميع
+      if (pk === 'change_password') return hasPermission(user?.permissions, user?.role || '', pk, 'self_update');
       return hasPermission(user?.permissions, user?.role || '', pk, 'view');
     }),
   })).filter((section) => section.items.length > 0);

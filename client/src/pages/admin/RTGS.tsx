@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useHasPermission } from '@/hooks/useHasPermission';
 import api from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
@@ -56,14 +57,16 @@ interface RtgsRow {
 
 interface ImportLog {
   id: number;
+  user_id: number | null;
   filename: string | null;
   total_rows: number;
   inserted_rows: number;
   skipped_duplicates: number;
   rejected_rows: number;
+  details: Record<string, unknown> | null;
+  duration_ms: number | null;
   created_at: string;
   user_name: string | null;
-  duration_ms?: number | null;
 }
 
 /** نتيجة مطابقة RRN — قراءة فقط، بدون حقن بيانات */
@@ -300,11 +303,20 @@ function ColumnFilterPopover({
 
 export function RTGS() {
   const [rtgs, setRtgs] = useState<RtgsRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0, totalPages: 0 });
+  const defaultDateRange = useMemo(() => {
+    const to = new Date();
+    const from = new Date(to);
+    from.setDate(from.getDate() - 30);
+    return {
+      sttl_date_from: from.toISOString().slice(0, 10),
+      sttl_date_to: to.toISOString().slice(0, 10),
+    };
+  }, []);
   const [filters, setFilters] = useState({
-    sttl_date_from: '',
-    sttl_date_to: '',
+    sttl_date_from: defaultDateRange.sttl_date_from,
+    sttl_date_to: defaultDateRange.sttl_date_to,
     transaction_date_from: '',
     transaction_date_to: '',
     mer: '',
@@ -322,7 +334,7 @@ export function RTGS() {
     details: '',
     iban: '',
   });
-  const [filterOptions, setFilterOptions] = useState<{
+  type FilterOptionsState = {
     merList: string[];
     mccList: (string | number)[];
     instId2List: string[];
@@ -332,10 +344,53 @@ export function RTGS() {
     directorateNameList: string[];
     bankDisplayNameList: string[];
     governorateList: string[];
-  }>({
+  };
+  const defaultFilterOptions: FilterOptionsState = {
     merList: [], mccList: [], instId2List: [],
     messageTypeList: [], terminalTypeList: [], ministryList: [], directorateNameList: [], bankDisplayNameList: [], governorateList: [],
+  };
+  const filterOptionsQuery = useQuery({
+    queryKey: ['rtgs-filter-options', filters.sttl_date_from || defaultDateRange.sttl_date_from, filters.sttl_date_to || defaultDateRange.sttl_date_to],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (filters.sttl_date_from) params.set('sttl_date_from', filters.sttl_date_from);
+      if (filters.sttl_date_to) params.set('sttl_date_to', filters.sttl_date_to);
+      const qs = params.toString();
+      const url = qs ? `/rtgs/filter-options?${qs}` : '/rtgs/filter-options';
+      const res = await api.get(url);
+      const data = res.data ?? {};
+      let merList = data.merList ?? [];
+      let ministryList = data.ministryList ?? [];
+      let directorateNameList = data.directorateNameList ?? [];
+      let governorateList = data.governorateList ?? [];
+      if (merList.length === 0 && directorateNameList.length === 0 && ministryList.length === 0 && governorateList.length === 0) {
+        try {
+          const merchantsRes = await api.get('/merchants/filter-options');
+          const m = merchantsRes.data ?? {};
+          merList = m.merchantIds ?? [];
+          ministryList = m.ministries ?? [];
+          directorateNameList = m.directorates ?? [];
+          governorateList = m.governorates ?? [];
+        } catch {
+          // ignore
+        }
+      }
+      return {
+        merList,
+        mccList: data.mccList ?? [],
+        instId2List: data.instId2List ?? [],
+        messageTypeList: data.messageTypeList ?? [],
+        terminalTypeList: data.terminalTypeList ?? [],
+        ministryList,
+        directorateNameList,
+        bankDisplayNameList: data.bankDisplayNameList ?? [],
+        governorateList,
+      } as FilterOptionsState;
+    },
+    staleTime: 60 * 1000,
+    placeholderData: defaultFilterOptions,
   });
+  const filterOptions = filterOptionsQuery.data ?? defaultFilterOptions;
   const [columnFilterOpen, setColumnFilterOpen] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [importLogs, setImportLogs] = useState<ImportLog[]>([]);
@@ -360,6 +415,7 @@ export function RTGS() {
   const [rrnMatchResults, setRrnMatchResults] = useState<RrnMatchResult[] | null>(null);
   const [rrnMatchLoading, setRrnMatchLoading] = useState(false);
   const rrnMatchFileRef = useRef<HTMLInputElement>(null);
+  const [dataRequested, setDataRequested] = useState(false);
   const { toast } = useToast();
   const canImport = useHasPermission('rtgs', 'import');
   const canExport = useHasPermission('rtgs', 'export');
@@ -368,13 +424,38 @@ export function RTGS() {
   const canViewImportLogs = useHasPermission('rtgs', 'view_import_logs');
   const canAccessSettings = useHasPermission('rtgs', 'access_settings');
 
+  const hasAnyFilter = () =>
+    !!(
+      filters.sttl_date_from ||
+      filters.sttl_date_to ||
+      filters.transaction_date_from ||
+      filters.transaction_date_to ||
+      filters.mer ||
+      filters.mcc ||
+      filters.inst_id2 ||
+      filters.search ||
+      (filters.text_search && String(filters.text_search).trim()) ||
+      filters.message_type ||
+      filters.ministry ||
+      filters.directorate_name ||
+      filters.bank_display_name ||
+      filters.terminal_type ||
+      filters.import_log_id ||
+      filters.governorate ||
+      (filters.details && String(filters.details).trim()) ||
+      (filters.iban && String(filters.iban).trim())
+    );
+
   const buildQueryParams = () => {
     const query: Record<string, string> = {
       page: String(pagination.page),
       limit: String(pagination.limit),
     };
-    if (filters.sttl_date_from) query.sttl_date_from = filters.sttl_date_from;
-    if (filters.sttl_date_to) query.sttl_date_to = filters.sttl_date_to;
+    // استخدام نطاق افتراضي (آخر 30 يوم) إن لم يُحدد المستخدم تاريخاً — لضمان ظهور بيانات
+    const sttlFrom = filters.sttl_date_from || defaultDateRange.sttl_date_from;
+    const sttlTo = filters.sttl_date_to || defaultDateRange.sttl_date_to;
+    if (sttlFrom) query.sttl_date_from = sttlFrom;
+    if (sttlTo) query.sttl_date_to = sttlTo;
     if (filters.transaction_date_from) query.transaction_date_from = filters.transaction_date_from;
     if (filters.transaction_date_to) query.transaction_date_to = filters.transaction_date_to;
     if (filters.mer) query.mer = filters.mer;
@@ -418,29 +499,9 @@ export function RTGS() {
     }
   };
 
-  const fetchFilterOptions = async () => {
-    try {
-      const res = await api.get('/rtgs/filter-options');
-      const data = res.data ?? {};
-      setFilterOptions({
-      merList: data.merList ?? [],
-      mccList: data.mccList ?? [],
-      instId2List: data.instId2List ?? [],
-      messageTypeList: data.messageTypeList ?? [],
-      terminalTypeList: data.terminalTypeList ?? [],
-      ministryList: data.ministryList ?? [],
-      directorateNameList: data.directorateNameList ?? [],
-      bankDisplayNameList: data.bankDisplayNameList ?? [],
-      governorateList: data.governorateList ?? [],
-    });
-    } catch {
-      // ignore
-    }
-  };
-
   const fetchImportLogs = async () => {
     try {
-      const res = await api.get('/rtgs/import-logs?limit=30');
+      const res = await api.get('/rtgs/import-logs?limit=2000');
       setImportLogs(res.data ?? []);
     } catch {
       setImportLogs([]);
@@ -448,8 +509,10 @@ export function RTGS() {
   };
 
   useEffect(() => {
+    if (!dataRequested) return;
     fetchRtgs();
   }, [
+    dataRequested,
     pagination.page,
     filters.sttl_date_from,
     filters.sttl_date_to,
@@ -470,10 +533,6 @@ export function RTGS() {
     filters.details,
     filters.iban,
   ]);
-
-  useEffect(() => {
-    fetchFilterOptions();
-  }, []);
 
   useEffect(() => {
     fetchImportLogs();
@@ -523,7 +582,7 @@ export function RTGS() {
       const res = await api.delete('/rtgs/all');
       const data = res.data as { message?: string; rtgs_deleted?: number } | undefined;
       toast({ title: 'تم الحذف بنجاح', description: data?.message ?? 'تم حذف جميع حركات RTGS', variant: 'default' });
-      fetchRtgs();
+      if (dataRequested) fetchRtgs();
       fetchImportLogs();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { error?: string } } };
@@ -541,7 +600,7 @@ export function RTGS() {
       const desc = data?.message ?? `تم حذف سجل الاستيراد و ${data?.rtgs_deleted ?? 0} حركة RTGS المرتبطة به`;
       toast({ title: 'تم الحذف بنجاح', description: desc, variant: 'default' });
       fetchImportLogs();
-      fetchRtgs();
+      if (dataRequested) fetchRtgs();
     } catch (e: unknown) {
       const err = e as { response?: { data?: { error?: string } } };
       toast({ title: 'خطأ في الحذف', description: err.response?.data?.error ?? 'فشل حذف سجل الاستيراد', variant: 'destructive' });
@@ -553,10 +612,15 @@ export function RTGS() {
     setPagination((prev) => ({ ...prev, page: 1 }));
   };
 
+  const handleApplyFilters = () => {
+    setPagination((prev) => ({ ...prev, page: 1 }));
+    setDataRequested(true);
+  };
+
   const clearFilters = () => {
     setFilters({
-      sttl_date_from: '',
-      sttl_date_to: '',
+      sttl_date_from: defaultDateRange.sttl_date_from,
+      sttl_date_to: defaultDateRange.sttl_date_to,
       transaction_date_from: '',
       transaction_date_to: '',
       mer: '',
@@ -579,6 +643,14 @@ export function RTGS() {
   };
 
   const handleExportExcel = async () => {
+    if (!hasAnyFilter()) {
+      toast({
+        title: 'تصدير غير متاح',
+        description: 'يجب تحديد فلتر واحد على الأقل (مثل فترة التواريخ) للتصدير لتقليل الحمل على النظام.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setExporting(true);
     try {
       const query = buildQueryParams();
@@ -588,7 +660,11 @@ export function RTGS() {
       const token = localStorage.getItem('token');
       const url = `/api/rtgs/export?${params.toString()}`;
       const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (!res.ok) throw new Error('Export failed');
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        const msg = errBody?.error ?? 'فشل التصدير';
+        throw new Error(msg);
+      }
       const blob = await res.blob();
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -597,7 +673,8 @@ export function RTGS() {
       URL.revokeObjectURL(a.href);
       toast({ title: 'تم التصدير', description: 'تم تنزيل ملف Excel بنجاح', variant: 'default' });
     } catch (e) {
-      toast({ title: 'خطأ', description: 'فشل تصدير Excel', variant: 'destructive' });
+      const msg = e instanceof Error ? e.message : 'فشل تصدير Excel';
+      toast({ title: 'خطأ', description: msg, variant: 'destructive' });
     } finally {
       setExporting(false);
     }
@@ -673,7 +750,7 @@ export function RTGS() {
     }
 
     setImporting(false);
-    fetchRtgs();
+    if (dataRequested) fetchRtgs();
     fetchImportLogs();
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -779,7 +856,7 @@ export function RTGS() {
               <button
                 type="button"
                 onClick={handleExportExcel}
-                disabled={exporting || pagination.total === 0}
+                disabled={exporting || !hasAnyFilter()}
                 className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium bg-white/20 hover:bg-white/30 transition-colors disabled:opacity-50 text-white"
               >
                 <Download className="w-4 h-4 text-white" />
@@ -803,6 +880,14 @@ export function RTGS() {
             )}
           </div>
         </div>
+
+        {/* KPI من سجل الاستيراد — يظهر عند فتح الصفحة دون تحميل جدول الحركات */}
+        {importLogs.length > 0 && (
+          <div className="mb-6">
+            <p className="text-sm font-semibold mb-2" style={{ color: '#026174' }}>ملخص عمليات الاستيراد</p>
+            <ImportLogKpiCards importLogs={importLogs} />
+          </div>
+        )}
 
         {/* ملخص آخر استيراد */}
         {importSummary && (
@@ -836,10 +921,10 @@ export function RTGS() {
         {/* كروت إحصائيات */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           {[
-            { label: 'إجمالي السجلات (الفلتر)', value: pagination.total.toLocaleString('en-US'), Icon: Hash, primary: true },
+            { label: 'إجمالي السجلات (الفلتر)', value: dataRequested ? pagination.total.toLocaleString('en-US') : '—', Icon: Hash, primary: true },
             { label: 'تاريخ التسوية', value: `${filters.sttl_date_from || '—'} → ${filters.sttl_date_to || '—'}`, Icon: Calendar, small: true },
             { label: 'التاجر / المصرف', value: filters.mer || filters.inst_id2 || 'الكل', Icon: Building2, small: true, truncate: true },
-            { label: 'الصفحة', value: `${pagination.page} / ${pagination.totalPages || 1}`, Icon: Banknote, small: true },
+            { label: 'الصفحة', value: dataRequested ? `${pagination.page} / ${pagination.totalPages || 1}` : '—', Icon: Banknote, small: true },
           ].map((item, idx) => {
             const Icon = item.Icon;
             return (
@@ -984,133 +1069,92 @@ export function RTGS() {
               مسح الفلاتر
             </button>
           </div>
+          {/* فترة التواريخ والبحث والملف */}
+          <p className="text-xs font-semibold mb-2" style={{ color: '#0f172a' }}>فترة التواريخ والبحث</p>
           <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
-            <div className="merchants-filter-input-wrapper">
-              <Search className="w-5 h-5 text-[#0d9488] flex-shrink-0" strokeWidth={2} />
-              <input
-                type="text"
-                placeholder="بحث: RRN / تاجر / وزارة / مصرف / التفاصيل..."
-                value={filters.text_search}
-                onChange={(e) => handleFilterChange('text_search', e.target.value)}
-                className="merchants-filter-input"
-              />
+            <div className="merchants-filter-input-wrapper" title="من تاريخ التسوية">
+              <Calendar className="w-4 h-4 text-[#026174] flex-shrink-0" strokeWidth={2} />
+              <input type="date" value={filters.sttl_date_from} onChange={(e) => handleFilterChange('sttl_date_from', e.target.value)} className="merchants-filter-input" placeholder="من تاريخ التسوية" />
+            </div>
+            <div className="merchants-filter-input-wrapper" title="إلى تاريخ التسوية">
+              <Calendar className="w-4 h-4 text-[#026174] flex-shrink-0" strokeWidth={2} />
+              <input type="date" value={filters.sttl_date_to} onChange={(e) => handleFilterChange('sttl_date_to', e.target.value)} className="merchants-filter-input" placeholder="إلى تاريخ التسوية" />
+            </div>
+            <div className="merchants-filter-input-wrapper" title="من تاريخ الحركة">
+              <Clock className="w-4 h-4 text-[#026174] flex-shrink-0" strokeWidth={2} />
+              <input type="date" value={filters.transaction_date_from} onChange={(e) => handleFilterChange('transaction_date_from', e.target.value)} className="merchants-filter-input" placeholder="من تاريخ الحركة" />
+            </div>
+            <div className="merchants-filter-input-wrapper" title="إلى تاريخ الحركة">
+              <Clock className="w-4 h-4 text-[#026174] flex-shrink-0" strokeWidth={2} />
+              <input type="date" value={filters.transaction_date_to} onChange={(e) => handleFilterChange('transaction_date_to', e.target.value)} className="merchants-filter-input" placeholder="إلى تاريخ الحركة" />
             </div>
             <div className="merchants-filter-input-wrapper">
               <Hash className="w-4 h-4 text-[#026174] flex-shrink-0" strokeWidth={2} />
-              <input
-                type="text"
-                placeholder="RRN..."
-                value={filters.search}
-                onChange={(e) => handleFilterChange('search', e.target.value)}
-                className="merchants-filter-input"
-              />
+              <input type="text" placeholder="RRN..." value={filters.search} onChange={(e) => handleFilterChange('search', e.target.value)} className="merchants-filter-input" dir="ltr" />
             </div>
             <div className="merchants-filter-input-wrapper">
-              <Calendar className="w-4 h-4 text-[#026174] flex-shrink-0" strokeWidth={2} />
-              <input
-                type="date"
-                value={filters.sttl_date_from}
-                onChange={(e) => handleFilterChange('sttl_date_from', e.target.value)}
-                className="merchants-filter-input"
-                title="من تاريخ التسوية"
-              />
-            </div>
-            <div className="merchants-filter-input-wrapper">
-              <Calendar className="w-4 h-4 text-[#026174] flex-shrink-0" strokeWidth={2} />
-              <input
-                type="date"
-                value={filters.sttl_date_to}
-                onChange={(e) => handleFilterChange('sttl_date_to', e.target.value)}
-                className="merchants-filter-input"
-                title="إلى تاريخ التسوية"
-              />
-            </div>
-            <div className="merchants-filter-input-wrapper">
-              <Clock className="w-4 h-4 text-[#026174] flex-shrink-0" strokeWidth={2} />
-              <input
-                type="date"
-                value={filters.transaction_date_from}
-                onChange={(e) => handleFilterChange('transaction_date_from', e.target.value)}
-                className="merchants-filter-input"
-                title="من تاريخ الحركة"
-              />
-            </div>
-            <div className="merchants-filter-input-wrapper">
-              <Clock className="w-4 h-4 text-[#026174] flex-shrink-0" strokeWidth={2} />
-              <input
-                type="date"
-                value={filters.transaction_date_to}
-                onChange={(e) => handleFilterChange('transaction_date_to', e.target.value)}
-                className="merchants-filter-input"
-                title="إلى تاريخ الحركة"
-              />
+              <Search className="w-5 h-5 text-[#0d9488] flex-shrink-0" strokeWidth={2} />
+              <input type="text" placeholder="بحث: RRN / تاجر / وزارة / مصرف / التفاصيل..." value={filters.text_search} onChange={(e) => handleFilterChange('text_search', e.target.value)} className="merchants-filter-input" />
             </div>
             <div className="merchants-filter-select-wrapper">
               <FileText className="w-4 h-4 text-[#026174] flex-shrink-0" strokeWidth={2} />
-              <select
-                value={filters.import_log_id}
-                onChange={(e) => handleFilterChange('import_log_id', e.target.value)}
-                className="merchants-filter-select"
-              >
+              <select value={filters.import_log_id} onChange={(e) => handleFilterChange('import_log_id', e.target.value)} className="merchants-filter-select" title="الملف المصدر">
                 <option value="">كل الملفات</option>
                 {importLogs.map((log) => (
-                  <option key={log.id} value={String(log.id)}>
-                    {log.filename ?? `سجل #${log.id}`}
-                  </option>
+                  <option key={log.id} value={String(log.id)}>{log.filename ?? `سجل #${log.id}`}</option>
                 ))}
               </select>
             </div>
           </div>
+
+          {/* من جدول إدارة التجار — تظهر الخيارات فور فتح الصفحة */}
           <div className="mt-5 pt-5" style={{ borderTop: '2px solid #86C4C4' }}>
-            <p className="text-sm font-bold mb-4" style={{ color: '#0f172a' }}>
-              فلترة حسب الأعمدة (اختيار متعدد)
-            </p>
+            <p className="text-sm font-bold mb-2" style={{ color: '#026174' }}>من جدول إدارة التجار</p>
+            <p className="text-xs text-slate-500 mb-3">اختر مديرية أو وزارة أو تاجر أو IBAN ثم اضغط &quot;عرض البيانات&quot; — لا حاجة لاستعلام اليوم كاملاً ثم الفلترة</p>
             <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
-              <MultiSelectFilter label="Message Type" options={filterOptions.messageTypeList} value={filters.message_type} onChange={(v) => handleFilterChange('message_type', v)} placeholder="بحث..." />
-              <MultiSelectFilter label="التاجر (MER)" options={filterOptions.merList} value={filters.mer} onChange={(v) => handleFilterChange('mer', v)} placeholder="بحث..." />
-              <MultiSelectFilter label="المحافظة" options={filterOptions.governorateList} value={filters.governorate} onChange={(v) => handleFilterChange('governorate', v)} placeholder="بحث..." />
-              <MultiSelectFilter label="اسم المديرية" options={filterOptions.directorateNameList} value={filters.directorate_name} onChange={(v) => handleFilterChange('directorate_name', v)} placeholder="بحث..." />
-              <div>
-                <label className="block text-xs font-semibold mb-1" style={{ color: '#0f172a' }}>التفاصيل</label>
-                <div className="merchants-filter-input-wrapper">
-                  <FileText className="w-4 h-4 text-[#0d9488] flex-shrink-0" strokeWidth={2} />
-                  <input
-                    type="text"
-                    placeholder="بحث في التفاصيل."
-                    value={filters.details}
-                    onChange={(e) => handleFilterChange('details', e.target.value)}
-                    className="merchants-filter-input"
-                  />
-                </div>
-              </div>
+              <MultiSelectFilter label="المديرية" options={filterOptions.directorateNameList} value={filters.directorate_name} onChange={(v) => handleFilterChange('directorate_name', v)} placeholder="الكل / بحث..." />
+              <MultiSelectFilter label="الوزارة" options={filterOptions.ministryList} value={filters.ministry} onChange={(v) => handleFilterChange('ministry', v)} placeholder="الكل / بحث..." />
+              <MultiSelectFilter label="المحافظة" options={filterOptions.governorateList} value={filters.governorate} onChange={(v) => handleFilterChange('governorate', v)} placeholder="الكل / بحث..." />
+              <MultiSelectFilter label="التاجر (MER)" options={filterOptions.merList} value={filters.mer} onChange={(v) => handleFilterChange('mer', v)} placeholder="الكل / بحث..." />
               <div>
                 <label className="block text-xs font-semibold mb-1" style={{ color: '#0f172a' }}>IBAN</label>
                 <div className="merchants-filter-input-wrapper">
                   <Banknote className="w-4 h-4 text-[#0d9488] flex-shrink-0" strokeWidth={2} />
-                  <input
-                    type="text"
-                    placeholder="بحث في IBAN..."
-                    value={filters.iban}
-                    onChange={(e) => handleFilterChange('iban', e.target.value)}
-                    className="merchants-filter-input"
-                    dir="ltr"
-                  />
+                  <input type="text" placeholder="بحث في IBAN..." value={filters.iban} onChange={(e) => handleFilterChange('iban', e.target.value)} className="merchants-filter-input" dir="ltr" />
                 </div>
               </div>
-              <MultiSelectFilter label="الوزارة" options={filterOptions.ministryList} value={filters.ministry} onChange={(v) => handleFilterChange('ministry', v)} placeholder="بحث..." />
-              <MultiSelectFilter label="المصرف" options={filterOptions.bankDisplayNameList} value={filters.bank_display_name} onChange={(v) => handleFilterChange('bank_display_name', v)} placeholder="بحث..." />
-              <MultiSelectFilter label="MCC" options={filterOptions.mccList} value={filters.mcc} onChange={(v) => handleFilterChange('mcc', v)} placeholder="بحث..." />
-              <MultiSelectFilter label="نوع الجهاز" options={filterOptions.terminalTypeList} value={filters.terminal_type} onChange={(v) => handleFilterChange('terminal_type', v)} placeholder="بحث..." />
+              <div>
+                <label className="block text-xs font-semibold mb-1" style={{ color: '#0f172a' }}>التفاصيل</label>
+                <div className="merchants-filter-input-wrapper">
+                  <FileText className="w-4 h-4 text-[#0d9488] flex-shrink-0" strokeWidth={2} />
+                  <input type="text" placeholder="بحث في التفاصيل..." value={filters.details} onChange={(e) => handleFilterChange('details', e.target.value)} className="merchants-filter-input" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* من الحركات والمصارف */}
+          <div className="mt-5 pt-5" style={{ borderTop: '2px solid #86C4C4' }}>
+            <p className="text-sm font-bold mb-2" style={{ color: '#026174' }}>من الحركات والمصارف</p>
+            <div className="grid gap-4 mb-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))' }}>
+              <MultiSelectFilter label="المصرف" options={filterOptions.bankDisplayNameList} value={filters.bank_display_name} onChange={(v) => handleFilterChange('bank_display_name', v)} placeholder="الكل / بحث..." />
+              <MultiSelectFilter label="نوع الرسالة (Message Type)" options={filterOptions.messageTypeList} value={filters.message_type} onChange={(v) => handleFilterChange('message_type', v)} placeholder="الكل / بحث..." />
+              <MultiSelectFilter label="MCC" options={filterOptions.mccList} value={filters.mcc} onChange={(v) => handleFilterChange('mcc', v)} placeholder="الكل / بحث..." />
+              <MultiSelectFilter label="نوع الجهاز" options={filterOptions.terminalTypeList} value={filters.terminal_type} onChange={(v) => handleFilterChange('terminal_type', v)} placeholder="الكل / بحث..." />
             </div>
           </div>
           <div className="mt-4 flex items-center gap-2">
             <button
               type="button"
-              onClick={() => fetchRtgs()}
+              onClick={handleApplyFilters}
               className="rtgs-apply-btn px-5 py-2.5 rounded-xl text-sm font-semibold text-white hover:opacity-95 transition-opacity"
+              style={{ background: 'linear-gradient(135deg, #026174 0%, #068294 100%)' }}
             >
-              تطبيق الفلاتر
+              عرض البيانات
             </button>
+            <span className="text-xs text-slate-500">
+              يُنصح بتحديد فترة (من تاريخ — إلى تاريخ) لتقليل وقت التحميل.
+            </span>
           </div>
         </div>
 
@@ -1123,7 +1167,15 @@ export function RTGS() {
             border: '1px solid rgba(0,0,0,0.06)',
           }}
         >
-          {loading && rtgs.length === 0 ? (
+          {!dataRequested ? (
+            <div className="p-12 text-center" style={{ color: '#475569' }}>
+              <Filter className="w-14 h-14 mx-auto mb-4 opacity-60" style={{ color: '#026174' }} />
+              <p className="text-lg font-semibold m-0">لم يتم تحميل بيانات الحركات</p>
+              <p className="text-sm mt-2 max-w-md mx-auto">
+                لتقليل الحمل على النظام، يتم عرض الإحصائيات (KPI) فقط عند فتح الصفحة. حدد الفلاتر المطلوبة (مثل فترة التواريخ) ثم اضغط &quot;عرض البيانات&quot; لتحميل النتائج.
+              </p>
+            </div>
+          ) : loading && rtgs.length === 0 ? (
             <div className="p-12 flex justify-center">
               <Loading message="جاري تحميل RTGS..." />
             </div>
@@ -1131,7 +1183,7 @@ export function RTGS() {
             <div className="p-12 text-center text-slate-500">
               <FileSpreadsheet className="w-12 h-12 mx-auto mb-3 opacity-50" />
               <p className="text-lg font-medium m-0">لا توجد حركات RTGS مطابقة للفلاتر</p>
-              <p className="text-sm mt-1">قم باستيراد ملف CSV أو تعديل معايير البحث.</p>
+              <p className="text-sm mt-1">عدّل معايير البحث أو استورد ملف CSV.</p>
             </div>
           ) : (
             <>
@@ -1609,54 +1661,67 @@ export function RTGS() {
                 </div>
               ) : (
                 <div className="rounded-xl overflow-hidden border border-slate-200/80" style={{ boxShadow: '0 4px 14px rgba(0,0,0,0.06)' }}>
-                  <table className="w-full border-collapse text-sm table-fixed">
-                    <thead>
-                      <tr style={{ background: 'linear-gradient(90deg, rgba(6,130,148,0.95) 0%, rgba(2,97,116,0.98) 100%)', color: '#fff' }}>
-                        <th className="text-right py-3 px-3 font-semibold w-[22%] min-w-[200px]">الملف</th>
-                        <th className="text-right py-3 px-3 font-semibold">التاريخ</th>
-                        <th className="text-right py-3 px-3 font-semibold">إجمالي</th>
-                        <th className="text-right py-3 px-3 font-semibold">إدخال</th>
-                        <th className="text-right py-3 px-3 font-semibold">تخطي</th>
-                        <th className="text-right py-3 px-3 font-semibold">مرفوض</th>
-                        <th className="text-right py-3 px-3 font-semibold">الوقت (ث)</th>
-                        <th className="text-right py-3 px-3 font-semibold">المستخدم</th>
-                        <th className="text-center py-3 px-3 font-semibold">الإجراءات</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredImportLogs.map((log) => (
-                        <tr key={log.id} className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50/80 transition-colors">
-                          <td className="py-3 px-3 truncate" title={log.filename ?? ''} dir="ltr">
-                            <span className="text-slate-700 font-medium">{log.filename ?? '—'}</span>
-                          </td>
-                          <td className="py-3 px-3 text-slate-600">{formatDate(log.created_at)}</td>
-                          <td className="py-3 px-3 font-semibold text-slate-800">{log.total_rows.toLocaleString('en-US')}</td>
-                          <td className="py-3 px-3 font-semibold text-emerald-600">{log.inserted_rows.toLocaleString('en-US')}</td>
-                          <td className="py-3 px-3 font-semibold text-amber-600">{log.skipped_duplicates.toLocaleString('en-US')}</td>
-                          <td className="py-3 px-3 font-semibold text-red-600">{log.rejected_rows.toLocaleString('en-US')}</td>
-                          <td className="py-3 px-3" dir="ltr">
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium" style={{ background: log.duration_ms != null ? 'rgba(6,130,148,0.1)' : 'transparent', color: log.duration_ms != null ? '#026174' : '#94a3b8' }}>
-                              {log.duration_ms != null ? `${(log.duration_ms / 1000).toFixed(1)} ث` : '—'}
-                            </span>
-                          </td>
-                          <td className="py-3 px-3 text-slate-600">{log.user_name ?? '—'}</td>
-                          <td className="py-3 px-3 text-center">
-                            {canDeleteImport && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteImportLogClick(log)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-red-600 hover:bg-red-50 hover:text-red-700 transition-all text-xs font-medium"
-                              title="حذف سجل الاستيراد وجميع الحركات المرتبطة به"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                              حذف
-                            </button>
-                            )}
-                          </td>
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-sm min-w-[900px]">
+                      <thead>
+                        <tr style={{ background: 'linear-gradient(90deg, rgba(6,130,148,0.95) 0%, rgba(2,97,116,0.98) 100%)', color: '#fff' }}>
+                          <th className="text-right py-3 px-3 font-semibold whitespace-nowrap">#</th>
+                          <th className="text-right py-3 px-3 font-semibold min-w-[200px]">الملف</th>
+                          <th className="text-right py-3 px-3 font-semibold">التاريخ</th>
+                          <th className="text-right py-3 px-3 font-semibold">إجمالي</th>
+                          <th className="text-right py-3 px-3 font-semibold">إدخال</th>
+                          <th className="text-right py-3 px-3 font-semibold">تخطي</th>
+                          <th className="text-right py-3 px-3 font-semibold">مرفوض</th>
+                          <th className="text-right py-3 px-3 font-semibold">الوقت (ث)</th>
+                          <th className="text-right py-3 px-3 font-semibold">المستخدم</th>
+                          <th className="text-right py-3 px-3 font-semibold">معرف المستخدم</th>
+                          <th className="text-right py-3 px-3 font-semibold max-w-[180px]">التفاصيل (JSON)</th>
+                          <th className="text-center py-3 px-3 font-semibold">الإجراءات</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {filteredImportLogs.map((log) => (
+                          <tr key={log.id} className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50/80 transition-colors">
+                            <td className="py-3 px-3 text-slate-500 font-mono text-xs">{log.id}</td>
+                            <td className="py-3 px-3 truncate max-w-[220px]" title={log.filename ?? ''} dir="ltr">
+                              <span className="text-slate-700 font-medium">{log.filename ?? '—'}</span>
+                            </td>
+                            <td className="py-3 px-3 text-slate-600">{formatDate(log.created_at)}</td>
+                            <td className="py-3 px-3 font-semibold text-slate-800">{(log.total_rows ?? 0).toLocaleString('en-US')}</td>
+                            <td className="py-3 px-3 font-semibold text-emerald-600">{(log.inserted_rows ?? 0).toLocaleString('en-US')}</td>
+                            <td className="py-3 px-3 font-semibold text-amber-600">{(log.skipped_duplicates ?? 0).toLocaleString('en-US')}</td>
+                            <td className="py-3 px-3 font-semibold text-red-600">{(log.rejected_rows ?? 0).toLocaleString('en-US')}</td>
+                            <td className="py-3 px-3" dir="ltr">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium" style={{ background: log.duration_ms != null ? 'rgba(6,130,148,0.1)' : 'transparent', color: log.duration_ms != null ? '#026174' : '#94a3b8' }}>
+                                {log.duration_ms != null ? `${(log.duration_ms / 1000).toFixed(1)} ث` : '—'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-slate-600">{log.user_name ?? '—'}</td>
+                            <td className="py-3 px-3 text-slate-500 font-mono text-xs">{log.user_id ?? '—'}</td>
+                            <td className="py-3 px-3 max-w-[180px] truncate text-xs text-slate-500" title={log.details ? JSON.stringify(log.details) : ''} dir="ltr">
+                              {log.details != null && Object.keys(log.details).length > 0 ? JSON.stringify(log.details).slice(0, 60) + (JSON.stringify(log.details).length > 60 ? '…' : '') : '—'}
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              {canDeleteImport && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteImportLogClick(log)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-red-600 hover:bg-red-50 hover:text-red-700 transition-all text-xs font-medium"
+                                title="حذف سجل الاستيراد وجميع الحركات المرتبطة به"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                حذف
+                              </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="text-xs text-slate-500 px-3 py-2 border-t border-slate-100">
+                    عرض {filteredImportLogs.length} سجلاً من أصل {importLogs.length}
+                  </p>
                 </div>
               )}
             </div>

@@ -1540,6 +1540,9 @@ const EmployeeDailySlide: React.FC<{ slide: any; slideIntervalSec: number }> = (
     return name[0].toUpperCase();
   };
 
+  const [avatarError, setAvatarError] = useState(false);
+  useEffect(() => setAvatarError(false), [employee?.id]);
+
   // حساب وقت الحضور: أول دخول - 30 دقيقة
   const attendanceTime = daily?.attendance?.loginTime 
     ? moment(daily.attendance.loginTime, 'HH:mm').subtract(30, 'minutes').format('h:mm A')
@@ -1643,14 +1646,15 @@ const EmployeeDailySlide: React.FC<{ slide: any; slideIntervalSec: number }> = (
         className="employee-header-cinematic"
       >
         <div className="employee-avatar-cinematic">
-          {employee.avatarUrl ? (
+          {employee.avatarUrl && !avatarError ? (
             <motion.img
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
               transition={{ type: 'spring', stiffness: 200 }}
-              src={employee.avatarUrl}
+              src={employee.avatarUrl.startsWith('http') ? employee.avatarUrl : `${window.location.origin}${employee.avatarUrl}`}
               alt={employee.name}
               className="avatar-image"
+              onError={() => setAvatarError(true)}
             />
           ) : (
             <motion.div
@@ -2042,6 +2046,9 @@ const EmployeeMonthlySlide: React.FC<{ slide: any; slideIntervalSec: number }> =
     return name[0].toUpperCase();
   };
 
+  const [avatarErrorMonthly, setAvatarErrorMonthly] = useState(false);
+  useEffect(() => setAvatarErrorMonthly(false), [employee?.id]);
+
   // حساب وقت الحضور: أول دخول - 30 دقيقة
   const attendanceTime = monthly.attendance?.loginTime 
     ? moment(monthly.attendance.loginTime, 'HH:mm').subtract(30, 'minutes').format('h:mm A')
@@ -2140,14 +2147,15 @@ const EmployeeMonthlySlide: React.FC<{ slide: any; slideIntervalSec: number }> =
         className="employee-header-cinematic"
       >
         <div className="employee-avatar-cinematic">
-          {employee.avatarUrl ? (
+          {employee.avatarUrl && !avatarErrorMonthly ? (
             <motion.img
               initial={{ scale: 0 }}
               animate={{ scale: 1 }}
               transition={{ type: 'spring', stiffness: 200 }}
-              src={employee.avatarUrl}
+              src={employee.avatarUrl.startsWith('http') ? employee.avatarUrl : `${window.location.origin}${employee.avatarUrl}`}
               alt={employee.name}
               className="avatar-image"
+              onError={() => setAvatarErrorMonthly(true)}
             />
           ) : (
             <motion.div
@@ -2687,6 +2695,7 @@ const MonthlyAdditionalByEmployeeSlide: React.FC<{ slide: any; slideIntervalSec?
   const containerRef = useRef<HTMLDivElement>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [groupsPerPage, setGroupsPerPage] = useState(2);
+  const [failedAvatarIds, setFailedAvatarIds] = useState<Set<number>>(new Set());
   const revealedStep = useRevealedSteps(5); // 1:header, 2-3:kpis, 4:content
   const showHeader = revealedStep >= 1;
   const showKpi = (i: number) => revealedStep >= 2 + i;
@@ -2759,8 +2768,13 @@ const MonthlyAdditionalByEmployeeSlide: React.FC<{ slide: any; slideIntervalSec?
                 >
                   <div className="monthly-employee-card-header">
                     <div className="monthly-employee-avatar-wrap">
-                      {g.employee?.avatarUrl ? (
-                        <img src={g.employee.avatarUrl} alt={g.employee.name} className="monthly-employee-avatar" />
+                      {g.employee?.avatarUrl && !failedAvatarIds.has(g.employee?.id) ? (
+                        <img
+                          src={g.employee.avatarUrl.startsWith('http') ? g.employee.avatarUrl : `${window.location.origin}${g.employee.avatarUrl}`}
+                          alt={g.employee.name}
+                          className="monthly-employee-avatar"
+                          onError={() => g.employee?.id != null && setFailedAvatarIds(prev => new Set(prev).add(g.employee.id))}
+                        />
                       ) : (
                         <div className="monthly-employee-avatar-placeholder">{g.employee?.name?.charAt(0) || '?'}</div>
                       )}

@@ -31,7 +31,7 @@
           // Clear all caches
           if ('caches' in window) {
             caches.keys().then(function(names) {
-              console.log('🔴 Found', names.length, 'cache(s)');
+              if (names.length) console.log('🔴 Found', names.length, 'cache(s)');
               for (let name of names) {
                 caches.delete(name).then(function(success) {
                   console.log(success ? '✅ Cache cleared: ' + name : '❌ Failed to clear: ' + name);
