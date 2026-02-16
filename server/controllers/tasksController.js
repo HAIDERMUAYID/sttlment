@@ -84,8 +84,9 @@ const getDailyTasks = async (req, res) => {
 // dateFrom, dateTo: فترة إنشاء المهمة (created_at)
 const getAdHocTasks = async (req, res) => {
   try {
-    const { status, assignedTo, createdBy, view, dateFrom, dateTo } = req.query;
+    const { status, assignedTo, createdBy, view, dateFrom, dateTo, filterByExecutionDate } = req.query;
     const userId = req.user?.id;
+    const byExecutionDate = filterByExecutionDate === '1' || filterByExecutionDate === 'true';
     
     let query = `
       SELECT aht.*,
@@ -106,8 +107,18 @@ const getAdHocTasks = async (req, res) => {
     let paramCount = 1;
     
     if (dateFrom && dateTo) {
-      query += ` AND aht.created_at::date >= $${paramCount++} AND aht.created_at::date <= $${paramCount++}`;
-      params.push(dateFrom, dateTo);
+      if (byExecutionDate) {
+        query += ` AND EXISTS (
+          SELECT 1 FROM task_executions te
+          WHERE te.ad_hoc_task_id = aht.id
+          AND (te.done_at AT TIME ZONE 'Asia/Baghdad')::date >= $${paramCount++}::date
+          AND (te.done_at AT TIME ZONE 'Asia/Baghdad')::date <= $${paramCount++}::date
+        )`;
+        params.push(dateFrom, dateTo);
+      } else {
+        query += ` AND aht.created_at::date >= $${paramCount++} AND aht.created_at::date <= $${paramCount++}`;
+        params.push(dateFrom, dateTo);
+      }
     }
     
     if (view === 'department_pending') {

@@ -39,6 +39,7 @@ export function useDailyTasks(filters?: {
 export function useAdHocTasks(filters?: {
   dateFrom?: string;
   dateTo?: string;
+  filterByExecutionDate?: string;
   view?: string;
   assignedTo?: string;
 }) {
@@ -51,6 +52,7 @@ export function useAdHocTasks(filters?: {
       const params = new URLSearchParams();
       if (filters?.dateFrom) params.append('dateFrom', filters.dateFrom);
       if (filters?.dateTo) params.append('dateTo', filters.dateTo);
+      if (filters?.filterByExecutionDate) params.append('filterByExecutionDate', filters.filterByExecutionDate);
       if (filters?.view) params.append('view', filters.view);
       if (filters?.assignedTo) params.append('assignedTo', filters.assignedTo);
 

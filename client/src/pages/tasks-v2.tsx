@@ -284,8 +284,10 @@ export function TasksV2() {
   };
 
   const adHocFilters = {
-    ...(dateMode === 'range' && filterDateFrom && filterDateTo
-      ? { dateFrom: filterDateFrom, dateTo: filterDateTo }
+    ...(dateMode === 'single' && filterDate
+      ? { dateFrom: filterDate, dateTo: filterDate, filterByExecutionDate: '1' }
+      : dateMode === 'range' && filterDateFrom && filterDateTo
+      ? { dateFrom: filterDateFrom, dateTo: filterDateTo, filterByExecutionDate: '1' }
       : {}),
     ...(filterView ? { view: filterView } : {}),
     ...(canFilterByAssignee && filterAssignee ? { assignedTo: filterAssignee } : {}),

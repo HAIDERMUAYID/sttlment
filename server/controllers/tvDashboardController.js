@@ -93,18 +93,25 @@ const getDashboardData = async (req, res) => {
       time: now.format('HH:mm:ss')
     };
     
-    // نظرة عامة على اليوم
+    // نظرة عامة على اليوم — التعريفات: المجدولة = كل المهام لليوم، المنجزة = التي نُفذت (وليس ملغاة)، المتأخرة اليوم = منفذة متأخراً، المعلقة = لم تُنفّذ ولم تُلغى
     const overviewResult = await pool.query(
-      `SELECT 
-         COUNT(*) as total,
-         COUNT(CASE WHEN status = 'completed' THEN 1 END) as done,
-         COUNT(CASE WHEN status = 'overdue' THEN 1 END) as overdue,
-         COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
-       FROM daily_tasks
-       WHERE task_date = $1`,
+      `SELECT COUNT(*) as total FROM daily_tasks WHERE task_date = $1`,
       [today]
     );
-    
+    const scheduledTotal = parseInt(overviewResult.rows[0]?.total || 0);
+
+    const doneCount = await pool.query(
+      `SELECT COUNT(DISTINCT dt.id) as count
+       FROM daily_tasks dt
+       WHERE dt.task_date = $1
+         AND EXISTS (
+           SELECT 1 FROM task_executions te
+           WHERE te.daily_task_id = dt.id AND te.result_status IN ('completed', 'completed_late')
+         )`,
+      [today]
+    );
+    const doneTotal = parseInt(doneCount.rows[0]?.count || 0);
+
     const lateCount = await pool.query(
       `SELECT COUNT(*) as count
        FROM task_executions te
@@ -112,6 +119,9 @@ const getDashboardData = async (req, res) => {
        WHERE dt.task_date = $1 AND te.result_status = 'completed_late'${EXCLUDE_CANCELLED}`,
       [today]
     );
+    const lateTotal = parseInt(lateCount.rows[0]?.count || 0);
+
+    const pendingTotal = Math.max(0, scheduledTotal - doneTotal);
     
     // إحصائيات إضافية للنظرة العامة
     const totalEmployees = await pool.query(
@@ -136,17 +146,15 @@ const getDashboardData = async (req, res) => {
     const overviewSlide = {
       type: 'overview',
       date: today,
-      scheduled: parseInt(overviewResult.rows[0]?.total || 0),
-      done: parseInt(overviewResult.rows[0]?.done || 0),
-      overdue: parseInt(overviewResult.rows[0]?.overdue || 0),
-      pending: parseInt(overviewResult.rows[0]?.pending || 0),
-      late: parseInt(lateCount.rows[0]?.count || 0),
+      scheduled: scheduledTotal,
+      done: doneTotal,
+      overdue: lateTotal,
+      pending: pendingTotal,
+      late: lateTotal,
       totalEmployees: parseInt(totalEmployees.rows[0]?.count || 0),
       activeEmployeesToday: parseInt(activeEmployeesToday.rows[0]?.count || 0),
       avgCompletionTime: Math.round(parseFloat(avgCompletionTime.rows[0]?.avg_duration || 0)),
-      completionRate: parseInt(overviewResult.rows[0]?.total || 0) > 0 
-        ? Math.round((parseInt(overviewResult.rows[0]?.done || 0) / parseInt(overviewResult.rows[0]?.total || 0)) * 100)
-        : 0
+      completionRate: scheduledTotal > 0 ? Math.round((doneTotal / scheduledTotal) * 100) : 0
     };
     
     // صفحة المهام المجدولة اليوم (Scheduled Tasks Today)
@@ -179,9 +187,9 @@ const getDashboardData = async (req, res) => {
     const scheduledTasksSlide = {
       type: 'scheduled-tasks',
       date: today,
-      total: parseInt(overviewResult.rows[0]?.total || 0),
-      completed: parseInt(overviewResult.rows[0]?.done || 0),
-      overdue: parseInt(overviewResult.rows[0]?.overdue || 0),
+      total: scheduledTotal,
+      completed: doneTotal,
+      overdue: lateTotal,
       tasks: scheduledTasksResult.rows.map(task => {
         const dueTime = task.due_date_time ? toBaghdadTime(task.due_date_time) : null;
         const doneAt = task.done_at ? toBaghdadTime(task.done_at) : null;
@@ -342,28 +350,28 @@ const getDashboardData = async (req, res) => {
       pool.query(
         `SELECT dt.assigned_to_user_id as user_id,
            COUNT(*)::int as total,
-           COUNT(te.id)::int as completed,
+           COUNT(CASE WHEN te.result_status IN ('completed','completed_late') THEN 1 END)::int as completed,
            COUNT(CASE WHEN te.result_status = 'completed' THEN 1 END)::int as on_time,
-           COUNT(CASE WHEN te.result_status = 'completed_late' THEN 1 END)::int as late
+           COUNT(CASE WHEN te.result_status = 'completed_late' THEN 1 END)::int as late,
+           COUNT(CASE WHEN te.result_status = 'cancelled' THEN 1 END)::int as cancelled
          FROM daily_tasks dt
          LEFT JOIN LATERAL (SELECT id, result_status FROM task_executions WHERE daily_task_id = dt.id ORDER BY done_at DESC LIMIT 1) te ON true
          WHERE dt.assigned_to_user_id = ANY($1::int[]) AND dt.task_date >= $2::date AND dt.task_date <= $3::date
-           AND (te.id IS NULL OR te.result_status <> 'cancelled')
          GROUP BY dt.assigned_to_user_id`,
         [empIds, monthStartStr, monthEndStr]
       ),
       pool.query(
         `SELECT aht.assigned_to_user_id as user_id,
            COUNT(*)::int as total,
-           COUNT(te.id)::int as completed,
+           COUNT(CASE WHEN te.result_status IN ('completed','completed_late') THEN 1 END)::int as completed,
            COUNT(CASE WHEN te.result_status = 'completed' THEN 1 END)::int as on_time,
-           COUNT(CASE WHEN te.result_status = 'completed_late' THEN 1 END)::int as late
+           COUNT(CASE WHEN te.result_status = 'completed_late' THEN 1 END)::int as late,
+           COUNT(CASE WHEN te.result_status = 'cancelled' THEN 1 END)::int as cancelled
          FROM ad_hoc_tasks aht
          LEFT JOIN LATERAL (SELECT id, result_status FROM task_executions WHERE ad_hoc_task_id = aht.id ORDER BY done_at DESC LIMIT 1) te ON true
          WHERE aht.assigned_to_user_id = ANY($1::int[])
            AND (aht.created_at AT TIME ZONE 'Asia/Baghdad')::date >= $2::date
            AND (aht.created_at AT TIME ZONE 'Asia/Baghdad')::date <= $3::date
-           AND (te.id IS NULL OR te.result_status <> 'cancelled')
          GROUP BY aht.assigned_to_user_id`,
         [empIds, monthStartStr, monthEndStr]
       ),
@@ -474,11 +482,13 @@ const getDashboardData = async (req, res) => {
         const adHocOnTime = parseInt(adhoc.on_time || 0);
         const schedLate = parseInt(sched.late || 0);
         const adHocLate = parseInt(adhoc.late || 0);
+        const schedCancelled = parseInt(sched.cancelled || 0);
+        const adHocCancelled = parseInt(adhoc.cancelled || 0);
         const totalTasks = schedTotal + adHocTotal;
         const completedTasks = schedCompleted + adHocCompleted;
         const onTimeTasks = schedOnTime + adHocOnTime;
         const lateTasks = schedLate + adHocLate;
-        const pendingTasks = Math.max(0, totalTasks - completedTasks);
+        const pendingTasks = Math.max(0, totalTasks - completedTasks - schedCancelled - adHocCancelled);
         // نسبة الدقة = (المهام في الوقت / إجمالي المهام) × 100 — المعلقة والمتأخرة تخفضان النسبة
         const accuracyPct = totalTasks > 0
           ? Math.round((onTimeTasks / totalTasks) * 100)
@@ -658,7 +668,7 @@ const getDashboardData = async (req, res) => {
     // شريحة إنجازات القسم الشهرية — إحصائيات مجمعة لكل الموظفين
     let departmentMonthlySlide = { type: 'department-monthly-overview', month: now.format('MMMM YYYY'), totalEmployees: employeeRows.length, monthly: { totalTasks: 0, scheduledTotal: 0, adHocTotal: 0, completed: 0, onTime: 0, late: 0, pending: 0, accuracy: 0, attendance: { daysPresent: 0 } }, categories: [] };
     try {
-      let deptTotal = 0, deptSched = 0, deptAdHoc = 0, deptCompleted = 0, deptOnTime = 0, deptLate = 0, deptDays = 0;
+      let deptTotal = 0, deptSched = 0, deptAdHoc = 0, deptCompleted = 0, deptOnTime = 0, deptLate = 0, deptCancelled = 0, deptDays = 0;
       const catMap = new Map();
       for (const emp of employeeRows) {
         const s = scheduledByEmp[emp.id] || {};
@@ -668,20 +678,21 @@ const getDashboardData = async (req, res) => {
         const sc = parseInt(s.completed || 0), ac = parseInt(a.completed || 0);
         const so = parseInt(s.on_time || 0), ao = parseInt(a.on_time || 0);
         const sl = parseInt(s.late || 0), al = parseInt(a.late || 0);
+        const sCanc = parseInt(s.cancelled || 0), aCanc = parseInt(a.cancelled || 0);
         deptSched += st;
         deptAdHoc += at;
         deptTotal += st + at;
         deptCompleted += sc + ac;
         deptOnTime += so + ao;
         deptLate += sl + al;
+        deptCancelled += sCanc + aCanc;
         deptDays += parseInt(am?.days_present || 0);
         for (const row of (categoriesByEmp[emp.id] || [])) {
           const n = row.name || 'بدون فئة';
           catMap.set(n, (catMap.get(n) || 0) + parseInt(row.count || 0));
         }
       }
-      deptTotal = Math.max(deptTotal, deptSched + deptAdHoc);
-      const deptPending = Math.max(0, deptTotal - deptCompleted);
+      const deptPending = Math.max(0, deptTotal - deptCompleted - deptCancelled);
       departmentMonthlySlide.monthly = {
         totalTasks: deptTotal,
         scheduledTotal: deptSched,
