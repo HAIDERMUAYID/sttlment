@@ -174,6 +174,22 @@ function TaskCard({
               <span className="font-semibold" dir="ltr">{moment(task.task_date).format('YYYY-MM-DD')}</span>
             </div>
           )}
+          {(task.done_by_name || task.executed_at) && (
+            <>
+              {task.done_by_name && (
+                <div className="flex justify-between items-center p-2 rounded-lg" style={{ background: 'rgba(6, 130, 148, 0.06)' }}>
+                  <span className="font-medium" style={{ color: 'var(--text-muted)' }}>اسم المنفذ:</span>
+                  <span className="font-semibold" style={{ color: 'var(--primary-800)' }}>{task.done_by_name}</span>
+                </div>
+              )}
+              {task.executed_at && (
+                <div className="flex justify-between items-center p-2 rounded-lg" style={{ background: 'rgba(6, 130, 148, 0.06)' }}>
+                  <span className="font-medium" style={{ color: 'var(--text-muted)' }}>وقت التنفيذ:</span>
+                  <span className="font-semibold" dir="ltr">{task.executed_at}</span>
+                </div>
+              )}
+            </>
+          )}
         </div>
         <div className="flex gap-2 pt-4 mt-auto border-t" style={{ borderColor: 'var(--border)' }}>
           <motion.button
@@ -721,6 +737,8 @@ export function TasksV2() {
                 <th className="text-end py-4 px-4 font-bold text-white">الحالة</th>
                 <th className="text-end py-4 px-4 font-bold text-white">التاريخ</th>
                 <th className="text-end py-4 px-4 font-bold text-white">المسؤول</th>
+                <th className="text-end py-4 px-4 font-bold text-white">اسم المنفذ</th>
+                <th className="text-end py-4 px-4 font-bold text-white">وقت التنفيذ</th>
                 <th className="text-end py-4 px-4 font-bold text-white">إجراءات</th>
               </tr>
             </thead>
@@ -736,6 +754,8 @@ export function TasksV2() {
                   <td className="py-3 px-4">{getStatusBadge(task.status)}</td>
                   <td className="py-3 px-4" style={{ color: 'var(--text)' }} dir="ltr">{task.task_date ? moment(task.task_date).format('YYYY-MM-DD') : '—'}</td>
                   <td className="py-3 px-4" style={{ color: 'var(--text)' }}>{(task.assigned_to_name || task.created_by_name) || '—'}</td>
+                  <td className="py-3 px-4" style={{ color: 'var(--text)' }}>{task.done_by_name || '—'}</td>
+                  <td className="py-3 px-4" style={{ color: 'var(--text)' }} dir="ltr">{task.executed_at || '—'}</td>
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-2 justify-end">
                       <button type="button" onClick={() => { setDetailsTask({ ...task, type: task._rowType }); setShowDetailsModal(true); }} className="ds-btn ds-btn-outline flex items-center gap-1.5 px-3 py-1.5 text-sm"><Eye className="w-3.5 h-3.5" /> تفاصيل</button>
@@ -891,6 +911,12 @@ export function TasksV2() {
                 )}
                 {detailsTask.type === 'ad-hoc' && detailsTask.created_by_name && (
                   <DetailRow label="أنشأها" value={detailsTask.created_by_name} />
+                )}
+                {detailsTask.done_by_name && (
+                  <DetailRow label="اسم المنفذ" value={detailsTask.done_by_name} />
+                )}
+                {detailsTask.executed_at && (
+                  <DetailRow label="وقت التنفيذ" value={detailsTask.executed_at} />
                 )}
                 {detailsTask.beneficiary && (
                   <DetailRow label="الجهة المستفيدة" value={detailsTask.beneficiary} />

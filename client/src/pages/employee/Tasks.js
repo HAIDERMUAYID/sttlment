@@ -351,6 +351,18 @@ const Tasks = () => {
                   <span className="info-value">{moment(task.due_date_time).locale('ar').format('hh:mm A')}</span>
                 </div>
               )}
+              {task.done_by_name && (
+                <div className="info-row">
+                  <span className="info-label">اسم المنفذ:</span>
+                  <span className="info-value">{task.done_by_name}</span>
+                </div>
+              )}
+              {task.executed_at && (
+                <div className="info-row">
+                  <span className="info-label">وقت التنفيذ:</span>
+                  <span className="info-value">{task.executed_at}</span>
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -362,6 +374,18 @@ const Tasks = () => {
                 <div className="info-row">
                   <span className="info-label">الجهة المستفيدة:</span>
                   <span className="info-value">{task.beneficiary}</span>
+                </div>
+              )}
+              {task.done_by_name && (
+                <div className="info-row">
+                  <span className="info-label">اسم المنفذ:</span>
+                  <span className="info-value">{task.done_by_name}</span>
+                </div>
+              )}
+              {task.executed_at && (
+                <div className="info-row">
+                  <span className="info-label">وقت التنفيذ:</span>
+                  <span className="info-value">{task.executed_at}</span>
                 </div>
               )}
             </>

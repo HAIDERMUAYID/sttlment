@@ -21,7 +21,9 @@ const getDailyTasks = async (req, res) => {
              c.name as category_name,
              u.name as assigned_to_name,
              s.due_time,
-             s.grace_minutes
+             s.grace_minutes,
+             (SELECT u2.name FROM task_executions te2 LEFT JOIN users u2 ON u2.id = te2.done_by_user_id WHERE te2.daily_task_id = dt.id ORDER BY te2.done_at DESC LIMIT 1) AS done_by_name,
+             (SELECT te2.done_at FROM task_executions te2 WHERE te2.daily_task_id = dt.id ORDER BY te2.done_at DESC LIMIT 1) AS executed_at
       FROM daily_tasks dt
       LEFT JOIN task_templates t ON dt.template_id = t.id
       LEFT JOIN categories c ON t.category_id = c.id
@@ -66,7 +68,8 @@ const getDailyTasks = async (req, res) => {
     
     const tasks = result.rows.map(task => ({
       ...task,
-      due_date_time: task.due_date_time ? toBaghdadTime(task.due_date_time).format('YYYY-MM-DD HH:mm:ss') : null
+      due_date_time: task.due_date_time ? toBaghdadTime(task.due_date_time).format('YYYY-MM-DD HH:mm:ss') : null,
+      executed_at: task.executed_at ? toBaghdadTime(task.executed_at).format('YYYY-MM-DD HH:mm') : null
     }));
     
     res.json(tasks);
@@ -89,7 +92,9 @@ const getAdHocTasks = async (req, res) => {
              t.title as template_title,
              c.name as category_name,
              u1.name as created_by_name,
-             u2.name as assigned_to_name
+             u2.name as assigned_to_name,
+             (SELECT u3.name FROM task_executions te3 LEFT JOIN users u3 ON u3.id = te3.done_by_user_id WHERE te3.ad_hoc_task_id = aht.id ORDER BY te3.done_at DESC LIMIT 1) AS done_by_name,
+             (SELECT te3.done_at FROM task_executions te3 WHERE te3.ad_hoc_task_id = aht.id ORDER BY te3.done_at DESC LIMIT 1) AS executed_at
       FROM ad_hoc_tasks aht
       LEFT JOIN task_templates t ON aht.template_id = t.id
       LEFT JOIN categories c ON aht.category_id = c.id
@@ -135,7 +140,8 @@ const getAdHocTasks = async (req, res) => {
     
     const tasks = result.rows.map(task => ({
       ...task,
-      due_date_time: task.due_date_time ? toBaghdadTime(task.due_date_time).format('YYYY-MM-DD HH:mm:ss') : null
+      due_date_time: task.due_date_time ? toBaghdadTime(task.due_date_time).format('YYYY-MM-DD HH:mm:ss') : null,
+      executed_at: task.executed_at ? toBaghdadTime(task.executed_at).format('YYYY-MM-DD HH:mm') : null
     }));
     
     res.json(tasks);
