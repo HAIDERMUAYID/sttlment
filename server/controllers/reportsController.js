@@ -11,6 +11,7 @@ const REPORT_CACHE_TTL_MS = 90 * 1000;
 const reportFullCache = new Map();
 const reportDailyCache = new Map();
 const reportComprehensiveCache = new Map();
+const reportV2Cache = new Map();
 
 function getCached(cache, key) {
   const entry = cache.get(key);
@@ -39,6 +40,12 @@ function getReportComprehensiveCached(dateFrom, dateTo) {
 function setReportComprehensiveCached(dateFrom, dateTo, data) {
   setCached(reportComprehensiveCache, `comprehensive:${dateFrom}:${dateTo}`, data);
 }
+function getReportV2Cached(key) {
+  return getCached(reportV2Cache, `v2:${key}`);
+}
+function setReportV2Cached(key, data) {
+  setCached(reportV2Cache, `v2:${key}`, data);
+}
 
 /** المهمة الملغاة تعتبر كأنها غير موجودة — لا تحتسب على القسم أو الموظف (إلغاء لسبب خارجي) */
 const EXCLUDE_CANCELLED = " AND te.result_status <> 'cancelled'";
@@ -66,6 +73,46 @@ function getDateRange(period, date, month, year, dateFrom, dateTo) {
     end = now.format('YYYY-MM-DD');
   }
   return { dateFrom: start, dateTo: end };
+}
+
+function parseCsvIntArray(val) {
+  if (val == null || val === '') return null;
+  const arr = String(val)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => parseInt(s, 10))
+    .filter((n) => Number.isFinite(n));
+  return arr.length ? arr : null;
+}
+
+function parseCsvTextArray(val) {
+  if (val == null || val === '') return null;
+  const arr = String(val)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return arr.length ? arr : null;
+}
+
+function normalizeLimit(val, { min = 1, max = 200, def = 50 } = {}) {
+  const n = parseInt(val, 10);
+  if (!Number.isFinite(n)) return def;
+  return Math.max(min, Math.min(max, n));
+}
+
+function buildReportV2CacheKey({ dateFrom, dateTo, employeeIds, categoryIds, templateIds, bankNames, tasksPage, tasksLimit, auditLimit }) {
+  return [
+    dateFrom,
+    dateTo,
+    employeeIds?.join('|') || '',
+    categoryIds?.join('|') || '',
+    templateIds?.join('|') || '',
+    bankNames?.join('|') || '',
+    tasksPage,
+    tasksLimit,
+    auditLimit,
+  ].join('::');
 }
 
 // تقرير يومي
@@ -800,7 +847,11 @@ const getReportFull = async (req, res) => {
     const [settlementsByBankRows, tasksByCategoryRows, tasksByTemplateRows, employeesRows] = await Promise.all([
       pool.query(
         `SELECT COALESCE(bank_display_name, 'غير معرف') as bank_name, COUNT(*)::int as settlement_count
-         FROM gov_settlement_summaries WHERE sttl_date >= $1 AND sttl_date <= $2
+         FROM (
+           SELECT bank_display_name FROM gov_settlement_summaries
+           WHERE sttl_date >= $1 AND sttl_date <= $2
+           GROUP BY sttl_date, inst_id2, bank_display_name
+         ) sub
          GROUP BY bank_display_name ORDER BY settlement_count DESC`,
         [dateFrom, dateTo]
       ).catch(() => ({ rows: [] })),
@@ -877,12 +928,518 @@ const getReportFull = async (req, res) => {
   }
 };
 
+// تقرير V2 موحّد — يعتمد على تاريخ التنفيذ done_at (بغداد)
+const getReportV2 = async (req, res) => {
+  try {
+    const period = req.query.period || 'month';
+    const { dateFrom, dateTo } = getDateRange(
+      period,
+      req.query.date,
+      req.query.month,
+      req.query.year,
+      req.query.dateFrom,
+      req.query.dateTo
+    );
+    // Boundary timestamps for Baghdad date range (inclusive day start, exclusive next-day start)
+    const doneAtFromTs = moment.tz(dateFrom, BAGHDAD).startOf('day').toDate();
+    const doneAtToTs = moment.tz(dateTo, BAGHDAD).add(1, 'day').startOf('day').toDate();
+
+    // Filters (optional)
+    const employeeIds = parseCsvIntArray(req.query.employeeIds);
+    const categoryIds = parseCsvIntArray(req.query.categoryIds);
+    const templateIds = parseCsvIntArray(req.query.templateIds);
+    const bankNames = parseCsvTextArray(req.query.bankNames);
+
+    // Paging
+    const tasksPage = Math.max(1, parseInt(req.query.tasksPage || '1', 10));
+    const tasksLimit = normalizeLimit(req.query.tasksLimit, { min: 1, max: 200, def: 50 });
+    const auditLimit = normalizeLimit(req.query.auditLimit, { min: 0, max: 200, def: 50 });
+    const tasksOffset = (tasksPage - 1) * tasksLimit;
+
+    const cacheKey = buildReportV2CacheKey({
+      dateFrom,
+      dateTo,
+      employeeIds,
+      categoryIds,
+      templateIds,
+      bankNames,
+      tasksPage,
+      tasksLimit,
+      auditLimit,
+    });
+    const cached = getReportV2Cached(cacheKey);
+    if (cached) return res.json(cached);
+
+    // Employees scope (default: all active employees)
+    const empRows = await pool.query(
+      `SELECT id, name, avatar_url
+       FROM users
+       WHERE role = 'employee' AND active = true
+         AND ($1::int[] IS NULL OR id = ANY($1::int[]))
+       ORDER BY name`,
+      [employeeIds]
+    );
+    const employeesList = empRows.rows || [];
+    const scopedEmpIds = employeesList.length ? employeesList.map((e) => e.id) : [];
+    const scopedEmpIdsParam = scopedEmpIds.length ? scopedEmpIds : [-1];
+
+    // Unified executions CTE across scheduled + ad-hoc (execution-based)
+    // IMPORTANT: filter by Baghdad date range via timestamp boundaries (index-friendly)
+    const baseExecutionsCte = `
+      WITH base_executions AS (
+        SELECT
+          te.id as execution_id,
+          te.done_at,
+          DATE(te.done_at AT TIME ZONE '${BAGHDAD}') as done_date,
+          te.result_status,
+          te.duration_minutes,
+          te.done_by_user_id as user_id,
+          'scheduled'::text as task_type,
+          dt.id as task_id,
+          dt.assigned_to_user_id as assigned_to_user_id,
+          dt.task_date as scheduled_date,
+          dt.due_date_time as due_date_time,
+          t.id as template_id,
+          t.title as template_title,
+          c.id as category_id,
+          c.name as category_name
+        FROM task_executions te
+        JOIN daily_tasks dt ON te.daily_task_id = dt.id
+        LEFT JOIN task_templates t ON dt.template_id = t.id
+        LEFT JOIN categories c ON t.category_id = c.id
+        WHERE te.daily_task_id IS NOT NULL
+          AND te.result_status <> 'cancelled'
+          AND te.done_at >= $1
+          AND te.done_at < $2
+          AND te.done_by_user_id = ANY($3::int[])
+          AND ($4::int[] IS NULL OR c.id = ANY($4::int[]))
+          AND ($5::int[] IS NULL OR t.id = ANY($5::int[]))
+        UNION ALL
+        SELECT
+          te.id as execution_id,
+          te.done_at,
+          DATE(te.done_at AT TIME ZONE '${BAGHDAD}') as done_date,
+          te.result_status,
+          te.duration_minutes,
+          te.done_by_user_id as user_id,
+          'ad_hoc'::text as task_type,
+          aht.id as task_id,
+          aht.assigned_to_user_id as assigned_to_user_id,
+          (aht.created_at AT TIME ZONE '${BAGHDAD}')::date as scheduled_date,
+          aht.due_date_time as due_date_time,
+          t.id as template_id,
+          t.title as template_title,
+          c.id as category_id,
+          c.name as category_name
+        FROM task_executions te
+        JOIN ad_hoc_tasks aht ON te.ad_hoc_task_id = aht.id
+        LEFT JOIN task_templates t ON aht.template_id = t.id
+        LEFT JOIN categories c ON t.category_id = c.id
+        WHERE te.ad_hoc_task_id IS NOT NULL
+          AND te.result_status <> 'cancelled'
+          AND te.done_at >= $1
+          AND te.done_at < $2
+          AND te.done_by_user_id = ANY($3::int[])
+          AND ($4::int[] IS NULL OR c.id = ANY($4::int[]))
+          AND ($5::int[] IS NULL OR t.id = ANY($5::int[]))
+      )
+    `;
+
+    const [
+      deptAgg,
+      byEmployeeAgg,
+      byCategoryAgg,
+      byTemplateAgg,
+      tasksRows,
+      tasksTotalRows,
+      attendanceAgg,
+      coverageAgg,
+      settlementsAgg,
+      settlementsByBankAgg,
+      ctAgg,
+      ctRows,
+      disbAgg,
+      disbRows,
+      auditRows,
+    ] = await Promise.all([
+      // Department aggregates
+      pool.query(
+        `${baseExecutionsCte}
+         SELECT
+           COUNT(*)::int as executed_total,
+           COUNT(CASE WHEN result_status = 'completed' THEN 1 END)::int as on_time,
+           COUNT(CASE WHEN result_status = 'completed_late' THEN 1 END)::int as late,
+           COUNT(CASE WHEN assigned_to_user_id IS NOT NULL AND assigned_to_user_id <> user_id THEN 1 END)::int as coverage,
+           AVG(duration_minutes)::float as avg_duration_minutes,
+           COALESCE(SUM(duration_minutes), 0)::int as total_duration_minutes,
+           COUNT(CASE WHEN task_type = 'scheduled' THEN 1 END)::int as scheduled_executed,
+           COUNT(CASE WHEN task_type = 'ad_hoc' THEN 1 END)::int as ad_hoc_executed
+         FROM base_executions`,
+        [doneAtFromTs, doneAtToTs, scopedEmpIdsParam, categoryIds, templateIds]
+      ),
+      // Aggregates by employee
+      pool.query(
+        `${baseExecutionsCte}
+         SELECT
+           user_id,
+           COUNT(*)::int as executed_total,
+           COUNT(CASE WHEN result_status = 'completed' THEN 1 END)::int as on_time,
+           COUNT(CASE WHEN result_status = 'completed_late' THEN 1 END)::int as late,
+           COUNT(CASE WHEN assigned_to_user_id IS NOT NULL AND assigned_to_user_id <> user_id THEN 1 END)::int as coverage,
+           AVG(duration_minutes)::float as avg_duration_minutes,
+           COALESCE(SUM(duration_minutes), 0)::int as total_duration_minutes,
+           COUNT(CASE WHEN task_type = 'scheduled' THEN 1 END)::int as scheduled_executed,
+           COUNT(CASE WHEN task_type = 'ad_hoc' THEN 1 END)::int as ad_hoc_executed
+         FROM base_executions
+         GROUP BY user_id`,
+        [doneAtFromTs, doneAtToTs, scopedEmpIdsParam, categoryIds, templateIds]
+      ),
+      // Tasks by category
+      pool.query(
+        `${baseExecutionsCte}
+         SELECT
+           COALESCE(category_id, -1) as category_id,
+           COALESCE(category_name, 'بدون فئة') as category_name,
+           COUNT(*)::int as executed_total,
+           COUNT(CASE WHEN result_status = 'completed' THEN 1 END)::int as on_time,
+           COUNT(CASE WHEN result_status = 'completed_late' THEN 1 END)::int as late
+         FROM base_executions
+         GROUP BY COALESCE(category_id, -1), COALESCE(category_name, 'بدون فئة')
+         ORDER BY executed_total DESC`,
+        [doneAtFromTs, doneAtToTs, scopedEmpIdsParam, categoryIds, templateIds]
+      ),
+      // Tasks by template + category
+      pool.query(
+        `${baseExecutionsCte}
+         SELECT
+           COALESCE(template_id, -1) as template_id,
+           COALESCE(template_title, 'بدون قالب') as template_title,
+           COALESCE(category_id, -1) as category_id,
+           COALESCE(category_name, 'بدون فئة') as category_name,
+           COUNT(*)::int as executed_total,
+           COUNT(CASE WHEN result_status = 'completed' THEN 1 END)::int as on_time,
+           COUNT(CASE WHEN result_status = 'completed_late' THEN 1 END)::int as late
+         FROM base_executions
+         GROUP BY COALESCE(template_id, -1), COALESCE(template_title, 'بدون قالب'),
+                  COALESCE(category_id, -1), COALESCE(category_name, 'بدون فئة')
+         ORDER BY executed_total DESC`,
+        [doneAtFromTs, doneAtToTs, scopedEmpIdsParam, categoryIds, templateIds]
+      ),
+      // Tasks list (paged)
+      pool.query(
+        `${baseExecutionsCte}
+         SELECT
+           execution_id,
+           done_at,
+           done_date,
+           result_status,
+           duration_minutes,
+           user_id,
+           task_type,
+           task_id,
+           assigned_to_user_id,
+           scheduled_date,
+           due_date_time,
+           template_id,
+           template_title,
+           category_id,
+           category_name
+         FROM base_executions
+         ORDER BY done_at DESC
+         LIMIT $6 OFFSET $7`,
+        [doneAtFromTs, doneAtToTs, scopedEmpIdsParam, categoryIds, templateIds, tasksLimit, tasksOffset]
+      ),
+      // Tasks total count (for paging)
+      pool.query(
+        `${baseExecutionsCte}
+         SELECT COUNT(*)::int as total FROM base_executions`,
+        [doneAtFromTs, doneAtToTs, scopedEmpIdsParam, categoryIds, templateIds]
+      ),
+      // Attendance aggregates (within date range)
+      pool.query(
+        `SELECT user_id,
+                COUNT(*)::int as days_present,
+                MIN(first_login_at) as earliest_login_at,
+                MAX(first_login_at) as latest_login_at
+         FROM attendance
+         WHERE date >= $1::date AND date <= $2::date
+           AND ($3::int[] IS NULL OR user_id = ANY($3::int[]))
+         GROUP BY user_id`,
+        [dateFrom, dateTo, scopedEmpIds]
+      ),
+      // Coverage matrix (scheduled only)
+      pool.query(
+        `SELECT te.done_by_user_id as done_by_user_id,
+                dt.assigned_to_user_id as assigned_to_user_id,
+                COUNT(*)::int as count
+         FROM task_executions te
+         JOIN daily_tasks dt ON te.daily_task_id = dt.id
+         WHERE te.result_status <> 'cancelled'
+           AND te.done_at >= $1
+           AND te.done_at < $2
+           AND te.done_by_user_id = ANY($3::int[])
+           AND dt.assigned_to_user_id IS NOT NULL
+           AND dt.assigned_to_user_id <> te.done_by_user_id
+         GROUP BY te.done_by_user_id, dt.assigned_to_user_id
+         ORDER BY count DESC`,
+        [doneAtFromTs, doneAtToTs, scopedEmpIdsParam]
+      ),
+      // Settlements KPIs (sttl_date-based range; optional bank filter by display name)
+      pool.query(
+        `SELECT
+           (SELECT COUNT(*) FROM (SELECT 1 FROM gov_settlement_summaries g
+             WHERE g.sttl_date >= $1::date AND g.sttl_date <= $2::date
+               AND ($3::text[] IS NULL OR g.bank_display_name = ANY($3::text[]))
+             GROUP BY g.sttl_date, g.inst_id2
+           ) t)::int as total_settlements,
+           COALESCE(SUM(g.movement_count), 0)::bigint as total_movements,
+           COALESCE(SUM(g.sum_amount), 0)::float as total_amount,
+           COALESCE(SUM(g.sum_fees), 0)::float as total_fees,
+           COALESCE(SUM(g.sum_acq), 0)::float as total_acq,
+           COALESCE(SUM(g.sum_sttle), 0)::float as total_sttle
+         FROM gov_settlement_summaries g
+         WHERE g.sttl_date >= $1::date AND g.sttl_date <= $2::date
+           AND ($3::text[] IS NULL OR g.bank_display_name = ANY($3::text[]))`,
+        [dateFrom, dateTo, bankNames]
+      ).catch(() => ({ rows: [{ total_settlements: 0, total_movements: 0, total_amount: 0, total_fees: 0, total_acq: 0, total_sttle: 0 }] })),
+      // Settlements by bank (consistent definition)
+      pool.query(
+        `SELECT COALESCE(bank_display_name, 'غير معرف') as bank_name, COUNT(*)::int as settlement_count,
+                COALESCE(SUM(movement_count),0)::bigint as total_movements,
+                COALESCE(SUM(sum_amount),0)::float as total_amount,
+                COALESCE(SUM(sum_fees),0)::float as total_fees,
+                COALESCE(SUM(sum_acq),0)::float as total_acq,
+                COALESCE(SUM(sum_sttle),0)::float as total_sttle
+         FROM (
+           SELECT sttl_date, inst_id2, bank_display_name,
+                  SUM(movement_count)::bigint as movement_count,
+                  SUM(sum_amount)::float as sum_amount,
+                  SUM(sum_fees)::float as sum_fees,
+                  SUM(sum_acq)::float as sum_acq,
+                  SUM(sum_sttle)::float as sum_sttle
+           FROM gov_settlement_summaries
+           WHERE sttl_date >= $1::date AND sttl_date <= $2::date
+             AND ($3::text[] IS NULL OR bank_display_name = ANY($3::text[]))
+           GROUP BY sttl_date, inst_id2, bank_display_name
+         ) x
+         GROUP BY bank_display_name
+         ORDER BY settlement_count DESC`,
+        [dateFrom, dateTo, bankNames]
+      ).catch(() => ({ rows: [] })),
+      // CT aggregate
+      pool.query(
+        `SELECT COUNT(*)::int as total,
+                COUNT(CASE WHEN match_status = 'matched' THEN 1 END)::int as matched,
+                COUNT(CASE WHEN COALESCE(match_status, '') != 'matched' THEN 1 END)::int as not_matched
+         FROM ct_records
+         WHERE sttl_date_from <= $2::date AND sttl_date_to >= $1::date`,
+        [dateFrom, dateTo]
+      ).catch(() => ({ rows: [{ total: 0, matched: 0, not_matched: 0 }] })),
+      // CT recent list
+      pool.query(
+        `SELECT c.id, c.sttl_date_from, c.sttl_date_to, c.ct_value, c.sum_acq, c.sum_fees, c.match_status, c.ct_received_date, u.name as user_name
+         FROM ct_records c
+         LEFT JOIN users u ON c.user_id = u.id
+         WHERE c.sttl_date_from <= $2::date AND c.sttl_date_to >= $1::date
+         ORDER BY c.sttl_date_from DESC
+         LIMIT 100`,
+        [dateFrom, dateTo]
+      ).catch(() => ({ rows: [] })),
+      // Disbursements aggregate
+      pool.query(
+        `SELECT COUNT(*)::int as count, COALESCE(SUM(amount), 0)::float as total_amount
+         FROM merchant_disbursements
+         WHERE transfer_date >= $1::date AND transfer_date <= $2::date`,
+        [dateFrom, dateTo]
+      ).catch(() => ({ rows: [{ count: 0, total_amount: 0 }] })),
+      // Disbursements recent list
+      pool.query(
+        `SELECT id, merchant_id, iban, amount, transfer_date, status, created_at
+         FROM merchant_disbursements
+         WHERE transfer_date >= $1::date AND transfer_date <= $2::date
+         ORDER BY transfer_date DESC, id DESC
+         LIMIT 100`,
+        [dateFrom, dateTo]
+      ).catch(() => ({ rows: [] })),
+      // Audit recent list
+      pool.query(
+        `SELECT id, user_id, action, entity_type, entity_id, details, created_at
+         FROM audit_log
+         WHERE ($1::int[] IS NULL OR user_id = ANY($1::int[]))
+           AND created_at >= $2
+           AND created_at < $3
+         ORDER BY created_at DESC
+         LIMIT $4`,
+        [employeeIds, doneAtFromTs, doneAtToTs, auditLimit]
+      ).catch(() => ({ rows: [] })),
+    ]);
+
+    const dept = deptAgg.rows[0] || {};
+    const settlements = settlementsAgg.rows[0] || {};
+    const ct = ctAgg.rows[0] || {};
+    const disb = disbAgg.rows[0] || {};
+
+    const byEmp = Object.fromEntries((byEmployeeAgg.rows || []).map((r) => [String(r.user_id), r]));
+    const byAtt = Object.fromEntries((attendanceAgg.rows || []).map((r) => [String(r.user_id), r]));
+
+    const employees = employeesList.map((e) => {
+      const agg = byEmp[String(e.id)] || {};
+      const att = byAtt[String(e.id)] || {};
+      return {
+        id: e.id,
+        name: e.name,
+        avatar_url: e.avatar_url || null,
+        attendance_days: parseInt(att.days_present || 0, 10),
+        executed_total: parseInt(agg.executed_total || 0, 10),
+        scheduled_executed: parseInt(agg.scheduled_executed || 0, 10),
+        ad_hoc_executed: parseInt(agg.ad_hoc_executed || 0, 10),
+        on_time: parseInt(agg.on_time || 0, 10),
+        late: parseInt(agg.late || 0, 10),
+        coverage: parseInt(agg.coverage || 0, 10),
+        avg_duration_minutes: agg.avg_duration_minutes != null ? Math.round(parseFloat(agg.avg_duration_minutes)) : null,
+        total_duration_minutes: parseInt(agg.total_duration_minutes || 0, 10),
+      };
+    });
+
+    const tasks = (tasksRows.rows || []).map((r) => ({
+      execution_id: r.execution_id,
+      done_at: r.done_at ? toBaghdadTime(r.done_at).format('YYYY-MM-DD HH:mm') : null,
+      done_date: r.done_date,
+      result_status: r.result_status,
+      duration_minutes: r.duration_minutes != null ? parseInt(r.duration_minutes, 10) : null,
+      user_id: r.user_id,
+      task_type: r.task_type,
+      task_id: r.task_id,
+      assigned_to_user_id: r.assigned_to_user_id,
+      scheduled_date: r.scheduled_date,
+      template_id: r.template_id,
+      template_title: r.template_title,
+      category_id: r.category_id,
+      category_name: r.category_name,
+    }));
+
+    const tasksTotal = parseInt(tasksTotalRows.rows[0]?.total || 0, 10);
+
+    const payload = {
+      period,
+      dateFrom,
+      dateTo,
+      filters: { employeeIds, categoryIds, templateIds, bankNames },
+      departmentSummary: {
+        executed_total: parseInt(dept.executed_total || 0, 10),
+        scheduled_executed: parseInt(dept.scheduled_executed || 0, 10),
+        ad_hoc_executed: parseInt(dept.ad_hoc_executed || 0, 10),
+        on_time: parseInt(dept.on_time || 0, 10),
+        late: parseInt(dept.late || 0, 10),
+        coverage: parseInt(dept.coverage || 0, 10),
+        avg_duration_minutes: dept.avg_duration_minutes != null ? Math.round(parseFloat(dept.avg_duration_minutes)) : null,
+        total_duration_minutes: parseInt(dept.total_duration_minutes || 0, 10),
+        attendance: {
+          employees_present: attendanceAgg.rows ? new Set(attendanceAgg.rows.map((r) => String(r.user_id))).size : 0,
+          total_days: null,
+        },
+      },
+      tasks: {
+        page: tasksPage,
+        limit: tasksLimit,
+        total: tasksTotal,
+        totalPages: tasksLimit > 0 ? Math.ceil(tasksTotal / tasksLimit) : 1,
+        rows: tasks,
+      },
+      tasksByCategory: (byCategoryAgg.rows || []).map((r) => ({
+        category_id: parseInt(r.category_id || -1, 10),
+        category_name: r.category_name,
+        executed_total: parseInt(r.executed_total || 0, 10),
+        on_time: parseInt(r.on_time || 0, 10),
+        late: parseInt(r.late || 0, 10),
+      })),
+      tasksByTemplateAndCategory: (byTemplateAgg.rows || []).map((r) => ({
+        template_id: parseInt(r.template_id || -1, 10),
+        template_title: r.template_title,
+        category_id: parseInt(r.category_id || -1, 10),
+        category_name: r.category_name,
+        executed_total: parseInt(r.executed_total || 0, 10),
+        on_time: parseInt(r.on_time || 0, 10),
+        late: parseInt(r.late || 0, 10),
+      })),
+      employees,
+      coverage: (coverageAgg.rows || []).map((r) => ({
+        done_by_user_id: r.done_by_user_id,
+        assigned_to_user_id: r.assigned_to_user_id,
+        count: parseInt(r.count || 0, 10),
+      })),
+      settlements: {
+        total_settlements: parseInt(settlements.total_settlements || 0, 10),
+        total_movements: parseInt(settlements.total_movements || 0, 10),
+        total_amount: parseFloat(settlements.total_amount || 0),
+        total_fees: parseFloat(settlements.total_fees || 0),
+        total_acq: parseFloat(settlements.total_acq || 0),
+        total_sttle: parseFloat(settlements.total_sttle || 0),
+        byBank: (settlementsByBankAgg.rows || []).map((r) => ({
+          bank_name: r.bank_name,
+          settlement_count: parseInt(r.settlement_count || 0, 10),
+          total_movements: parseInt(r.total_movements || 0, 10),
+          total_amount: parseFloat(r.total_amount || 0),
+          total_fees: parseFloat(r.total_fees || 0),
+          total_acq: parseFloat(r.total_acq || 0),
+          total_sttle: parseFloat(r.total_sttle || 0),
+        })),
+      },
+      ctMatching: {
+        total: parseInt(ct.total || 0, 10),
+        matched: parseInt(ct.matched || 0, 10),
+        notMatched: parseInt(ct.not_matched || 0, 10),
+        records: (ctRows.rows || []).map((r) => ({
+          id: r.id,
+          sttl_date_from: r.sttl_date_from,
+          sttl_date_to: r.sttl_date_to,
+          ct_value: parseFloat(r.ct_value || 0),
+          sum_acq: parseFloat(r.sum_acq || 0),
+          sum_fees: parseFloat(r.sum_fees || 0),
+          match_status: r.match_status,
+          ct_received_date: r.ct_received_date,
+          user_name: r.user_name,
+        })),
+      },
+      merchantDisbursements: {
+        count: parseInt(disb.count || 0, 10),
+        total_amount: parseFloat(disb.total_amount || 0),
+        rows: (disbRows.rows || []).map((r) => ({
+          id: r.id,
+          merchant_id: r.merchant_id,
+          iban: r.iban,
+          amount: parseFloat(r.amount || 0),
+          transfer_date: r.transfer_date,
+          status: r.status,
+          created_at: r.created_at ? toBaghdadTime(r.created_at).format('YYYY-MM-DD HH:mm') : null,
+        })),
+      },
+      audit: (auditRows.rows || []).map((r) => ({
+        id: r.id,
+        user_id: r.user_id,
+        action: r.action,
+        entity_type: r.entity_type,
+        entity_id: r.entity_id,
+        details: r.details,
+        created_at: r.created_at ? toBaghdadTime(r.created_at).format('YYYY-MM-DD HH:mm') : null,
+      })),
+    };
+
+    setReportV2Cached(cacheKey, payload);
+    res.json(payload);
+  } catch (error) {
+    console.error('خطأ في تقرير V2:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+};
+
 module.exports = {
   getDailyReport,
   getMonthlyReport,
   getCoverageReport,
   getComprehensiveReport,
   getReportFull,
+  getReportV2,
   exportToExcel,
   exportToPdf
 };

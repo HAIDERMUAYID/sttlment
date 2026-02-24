@@ -5,11 +5,19 @@ services:
     # CI= يمنع اعتبار تحذيرات ESLint أخطاء فاشلة للبناء
     buildCommand: npm install && cd client && npm install --include=dev && CI= npm run build && cd ..
     startCommand: npm start
+    # قرص دائم لحفظ uploads (الصور/المرفقات) حتى لا تضيع بعد أي Deploy
+    # ملاحظة: الأقراص الدائمة متاحة فقط للخدمات المدفوعة على Render.
+    disk:
+      name: uploads
+      mountPath: /opt/render/project/src/uploads
+      sizeGB: 10
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
+      - key: UPLOAD_PATH
+        value: /opt/render/project/src/uploads
       - key: POOL_MAX
         value: "5"  # تقليل اتصالات DB — مناسب للـ Free tier
       - key: DATABASE_URL

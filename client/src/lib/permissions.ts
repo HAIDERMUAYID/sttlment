@@ -11,6 +11,7 @@ export const ROUTE_TO_PAGE: Record<string, string> = {
   '/ct-matching': 'ct_matching',
   '/merchant-disbursements': 'merchant_disbursements',
   '/reports': 'reports',
+  '/reports/print': 'reports',
   '/attendance': 'attendance',
   '/merchants': 'merchants',
   '/users': 'users',

@@ -21,6 +21,7 @@ const SchedulesV2 = lazy(() => import('./pages/schedules-v2'));
 const TemplatesV2 = lazy(() => import('./pages/templates-v2').then(m => ({ default: m.TemplatesV2 })));
 const CategoriesV2 = lazy(() => import('./pages/categories-v2').then(m => ({ default: m.CategoriesV2 })));
 const ReportsV2 = lazy(() => import('./pages/reports-v2').then(m => ({ default: m.ReportsV2 })));
+const ReportsV2Print = lazy(() => import('./pages/reports-v2-print').then(m => ({ default: m.ReportsV2Print })));
 const UsersV2 = lazy(() => import('./pages/users-v2').then(m => ({ default: m.UsersV2 })));
 const AttendanceV2 = lazy(() => import('./pages/attendance-v2').then(m => ({ default: m.AttendanceV2 })));
 const AuditLogV2 = lazy(() => import('./pages/audit-log-v2').then(m => ({ default: m.AuditLogV2 })));
@@ -90,6 +91,18 @@ function App() {
                   <TVDashboard />
                 </Suspense>
               } 
+            />
+
+            {/* Print Routes (Protected, no layout) */}
+            <Route
+              path="/reports/print"
+              element={
+                <RouteGuard pageKey="reports">
+                  <Suspense fallback={<SuspenseFallback />}>
+                    <ReportsV2Print />
+                  </Suspense>
+                </RouteGuard>
+              }
             />
             
             {/* Protected Routes with MainLayout */}

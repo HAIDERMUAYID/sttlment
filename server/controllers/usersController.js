@@ -13,7 +13,6 @@ const getUsers = async (req, res) => {
        FROM users
        ORDER BY created_at DESC`
     );
-    
     res.json(result.rows);
   } catch (error) {
     console.error('خطأ في جلب المستخدمين:', error);
@@ -30,11 +29,9 @@ const getUser = async (req, res) => {
        FROM users WHERE id = $1`,
       [id]
     );
-    
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'المستخدم غير موجود' });
     }
-    
     res.json(result.rows[0]);
   } catch (error) {
     console.error('خطأ في جلب المستخدم:', error);
@@ -148,7 +145,6 @@ const updateUser = async (req, res) => {
       updates.push(`can_manage_merchants = $${paramCount++}`);
       values.push(canManage);
     }
-    
     if (updates.length === 0) {
       return res.status(400).json({ error: 'لا توجد تحديثات' });
     }
@@ -161,7 +157,6 @@ const updateUser = async (req, res) => {
        RETURNING id, name, email, role, active, can_create_ad_hoc, can_manage_merchants, avatar_url, created_at, updated_at`,
       values
     );
-    
     await auditLog(
       req.user.id,
       'update_user',
@@ -171,7 +166,6 @@ const updateUser = async (req, res) => {
       req.ip,
       req.get('user-agent')
     );
-    
     res.json(result.rows[0]);
   } catch (error) {
     console.error('خطأ في تحديث المستخدم:', error);

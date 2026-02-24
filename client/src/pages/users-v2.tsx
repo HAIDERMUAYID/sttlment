@@ -152,7 +152,7 @@ export function UsersV2() {
         can_create_ad_hoc: user.can_create_ad_hoc || false,
         can_manage_merchants: user.can_manage_merchants || false,
         active: user.active !== false,
-      });
+        });
     } else {
       setEditingUser(null);
       setFormData({
@@ -206,6 +206,7 @@ export function UsersV2() {
         payload.can_create_ad_hoc = false;
         payload.can_manage_merchants = false;
       }
+
 
       let userId: number;
       if (editingUser) {

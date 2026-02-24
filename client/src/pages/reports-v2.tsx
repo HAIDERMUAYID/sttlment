@@ -57,27 +57,176 @@ function getWeekRange(): [string, string] {
 }
 
 type Period = 'day' | 'week' | 'month' | 'custom';
+type TabKey = 'summary' | 'tasks' | 'employees' | 'coverage' | 'settlements' | 'systems';
 
 function num(n: number | undefined | null): string {
   return String(n ?? 0);
 }
 
-interface ReportFull {
+function downloadCsv(filename: string, rows: Array<Record<string, unknown>>) {
+  if (!rows || rows.length === 0) return;
+  const headerSet = new Set<string>();
+  for (const r of rows) {
+    for (const k of Object.keys(r || {})) headerSet.add(k);
+  }
+  const headers = Array.from(headerSet);
+  const escape = (v: any) => {
+    if (v == null) return '';
+    const s = String(v);
+    if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+  const lines = [
+    headers.join(','),
+    ...rows.map((r) => headers.map((h) => escape((r as any)[h])).join(',')),
+  ];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+interface ReportV2 {
   period: string;
   dateFrom: string;
   dateTo: string;
-  settlementsByBank: { bank_name: string; settlement_count: number }[];
-  tasksByCategory: { category_name: string; task_count: number }[];
-  tasksByTemplateAndCategory: { template_title: string; category_name: string; task_count: number }[];
-  employees: {
+  filters: {
+    employeeIds: number[] | null;
+    categoryIds: number[] | null;
+    templateIds: number[] | null;
+    bankNames: string[] | null;
+  };
+  departmentSummary: {
+    executed_total: number;
+    scheduled_executed: number;
+    ad_hoc_executed: number;
+    on_time: number;
+    late: number;
+    coverage: number;
+    avg_duration_minutes: number | null;
+    total_duration_minutes: number;
+    attendance: {
+      employees_present: number;
+      total_days: number | null;
+    };
+  };
+  tasks: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    rows: Array<{
+      execution_id: number;
+      done_at: string | null;
+      done_date: string;
+      result_status: 'completed' | 'completed_late' | 'skipped' | 'cancelled' | string;
+      duration_minutes: number | null;
+      user_id: number;
+      task_type: 'scheduled' | 'ad_hoc';
+      task_id: number;
+      assigned_to_user_id: number | null;
+      scheduled_date: string | null;
+      template_id: number | null;
+      template_title: string | null;
+      category_id: number | null;
+      category_name: string | null;
+    }>;
+  };
+  tasksByCategory: Array<{
+    category_id: number;
+    category_name: string;
+    executed_total: number;
+    on_time: number;
+    late: number;
+  }>;
+  tasksByTemplateAndCategory: Array<{
+    template_id: number;
+    template_title: string;
+    category_id: number;
+    category_name: string;
+    executed_total: number;
+    on_time: number;
+    late: number;
+  }>;
+  employees: Array<{
     id: number;
     name: string;
     avatar_url: string | null;
     attendance_days: number;
-    tasks_done: number;
+    executed_total: number;
+    scheduled_executed: number;
+    ad_hoc_executed: number;
     on_time: number;
     late: number;
-  }[];
+    coverage: number;
+    avg_duration_minutes: number | null;
+    total_duration_minutes: number;
+  }>;
+  coverage: Array<{
+    done_by_user_id: number;
+    assigned_to_user_id: number;
+    count: number;
+  }>;
+  settlements: {
+    total_settlements: number;
+    total_movements: number;
+    total_amount: number;
+    total_fees: number;
+    total_acq: number;
+    total_sttle: number;
+    byBank: Array<{
+      bank_name: string;
+      settlement_count: number;
+      total_movements: number;
+      total_amount: number;
+      total_fees: number;
+      total_acq: number;
+      total_sttle: number;
+    }>;
+  };
+  ctMatching: {
+    total: number;
+    matched: number;
+    notMatched: number;
+    records: Array<{
+      id: number;
+      sttl_date_from: string;
+      sttl_date_to: string;
+      ct_value: number;
+      sum_acq: number;
+      sum_fees: number;
+      match_status: string | null;
+      ct_received_date: string | null;
+      user_name: string | null;
+    }>;
+  };
+  merchantDisbursements: {
+    count: number;
+    total_amount: number;
+    rows: Array<{
+      id: number;
+      merchant_id: string;
+      iban: string;
+      amount: number;
+      transfer_date: string;
+      status: string;
+      created_at: string | null;
+    }>;
+  };
+  audit: Array<{
+    id: number;
+    user_id: number | null;
+    action: string;
+    entity_type: string | null;
+    entity_id: number | null;
+    details: any;
+    created_at: string | null;
+  }>;
 }
 
 const CHART_COLORS = ['#026174', '#068294', '#0ea5e9', '#38bdf8', '#7dd3fc', '#0d9488', '#14b8a6', '#2dd4bf'];
@@ -105,7 +254,7 @@ function TemplateCategoryTable({
   onTemplateSearchChange,
   num,
 }: {
-  rows: { template_title: string; category_name: string; task_count: number }[];
+  rows: { template_title: string; category_name: string; executed_total: number }[];
   templateSearch: string;
   onTemplateSearchChange: (v: string) => void;
   num: (n: number | undefined | null) => string;
@@ -141,7 +290,7 @@ function TemplateCategoryTable({
               <div className="grid grid-cols-[1fr_1fr_auto] bg-slate-100 border-b px-4 py-3 text-sm font-semibold text-slate-700">
                 <span>القالب</span>
                 <span>الفئة</span>
-                <span className="text-left font-mono">عدد المهام</span>
+                <span className="text-left font-mono">المنجزة</span>
               </div>
               <div
                 ref={parentRef}
@@ -177,7 +326,7 @@ function TemplateCategoryTable({
                         <span className="truncate" title={row.category_name}>
                           {row.category_name}
                         </span>
-                        <span className="font-mono text-left">{num(row.task_count)}</span>
+                        <span className="font-mono text-left">{num(row.executed_total)}</span>
                       </div>
                     );
                   })}
@@ -206,6 +355,9 @@ export function ReportsV2() {
   const [dateTo, setDateTo] = useState(weekRange[1]);
   const [employeeSort, setEmployeeSort] = useState<'name' | 'tasks' | 'attendance'>('tasks');
   const [templateSearch, setTemplateSearch] = useState('');
+  const [activeTab, setActiveTab] = useState<TabKey>('summary');
+  const [tasksPage, setTasksPage] = useState(1);
+  const [tasksLimit, setTasksLimit] = useState(50);
 
   const params = new URLSearchParams();
   params.set('period', period);
@@ -218,29 +370,32 @@ export function ReportsV2() {
     if (dateFrom) params.set('dateFrom', dateFrom);
     if (dateTo) params.set('dateTo', dateTo);
   }
+  params.set('tasksPage', String(tasksPage));
+  params.set('tasksLimit', String(tasksLimit));
 
-  const { data, isLoading, refetch } = useQuery<ReportFull>({
-    queryKey: ['report-full', period, date, month, year, dateFrom, dateTo],
+  const { data, isLoading, refetch } = useQuery<ReportV2>({
+    queryKey: ['report-v2', period, date, month, year, dateFrom, dateTo, tasksPage, tasksLimit],
     queryFn: async () => {
-      const res = await api.get(`/reports/full?${params.toString()}`);
+      const res = await api.get(`/reports/v2?${params.toString()}`);
       return res.data;
     },
     enabled: period !== 'custom' && period !== 'week' ? true : !!(dateFrom && dateTo),
     staleTime: 90 * 1000, // 90 ثانية — توافق مع TTL التخزين المؤقت في السيرفر
   });
 
-  const settlementsByBank = data?.settlementsByBank ?? [];
-  const tasksByCategory = data?.tasksByCategory ?? [];
-  const tasksByTemplateAndCategory = data?.tasksByTemplateAndCategory ?? [];
-  const employeesRaw = data?.employees ?? [];
+  const settlementsByBank = useMemo(() => data?.settlements?.byBank ?? [], [data?.settlements?.byBank]);
+  const tasksByCategory = useMemo(() => data?.tasksByCategory ?? [], [data?.tasksByCategory]);
+  const tasksByTemplateAndCategory = useMemo(() => data?.tasksByTemplateAndCategory ?? [], [data?.tasksByTemplateAndCategory]);
+  const employeesRaw = useMemo(() => data?.employees ?? [], [data?.employees]);
+  const dept = data?.departmentSummary;
 
-  const totalSettlements = settlementsByBank.reduce((s, r) => s + r.settlement_count, 0);
-  const totalTasks = tasksByCategory.reduce((s, r) => s + r.task_count, 0);
+  const totalSettlements = data?.settlements?.total_settlements ?? 0;
+  const totalExecutedTasks = dept?.executed_total ?? 0;
 
   const employees = useMemo(() => {
     const list = [...employeesRaw];
     if (employeeSort === 'name') list.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
-    if (employeeSort === 'tasks') list.sort((a, b) => b.tasks_done - a.tasks_done);
+    if (employeeSort === 'tasks') list.sort((a, b) => b.executed_total - a.executed_total);
     if (employeeSort === 'attendance') list.sort((a, b) => b.attendance_days - a.attendance_days);
     return list;
   }, [employeesRaw, employeeSort]);
@@ -255,64 +410,145 @@ export function ReportsV2() {
     );
   }, [tasksByTemplateAndCategory, templateSearch]);
 
+  const idToName = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const e of employeesRaw) m.set(e.id, e.name);
+    return m;
+  }, [employeesRaw]);
+
+  const coverageRows = data?.coverage ?? [];
+
+  const onTimePct = useMemo(() => {
+    const total = dept?.executed_total ?? 0;
+    if (!total) return 0;
+    const ot = dept?.on_time ?? 0;
+    return Math.round((ot / total) * 100);
+  }, [dept?.executed_total, dept?.on_time]);
+
   const handlePrint = () => {
-    if (!reportRef.current) {
-      window.print();
+    const sp = new URLSearchParams();
+    sp.set('period', period);
+    if (period === 'day') sp.set('date', date);
+    if (period === 'month') {
+      sp.set('month', String(month));
+      sp.set('year', String(year));
+    }
+    if (period === 'custom' || period === 'week') {
+      if (dateFrom) sp.set('dateFrom', dateFrom);
+      if (dateTo) sp.set('dateTo', dateTo);
+    }
+    // لطباعة ورقية: نستخدم حد أكبر للمهام داخل الصفحة الورقية (بدون scrolling)
+    sp.set('tasksPage', '1');
+    sp.set('tasksLimit', '200');
+    sp.set('autoPrint', '1');
+    window.open(`/reports/print?${sp.toString()}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleExport = () => {
+    if (!data) return;
+    const suffix = `${data.dateFrom}_to_${data.dateTo}`;
+    if (activeTab === 'summary') {
+      downloadCsv(`report_summary_${suffix}.csv`, [
+        {
+          dateFrom: data.dateFrom,
+          dateTo: data.dateTo,
+          executed_total: data.departmentSummary.executed_total,
+          scheduled_executed: data.departmentSummary.scheduled_executed,
+          ad_hoc_executed: data.departmentSummary.ad_hoc_executed,
+          on_time: data.departmentSummary.on_time,
+          late: data.departmentSummary.late,
+          coverage: data.departmentSummary.coverage,
+          avg_duration_minutes: data.departmentSummary.avg_duration_minutes,
+          total_duration_minutes: data.departmentSummary.total_duration_minutes,
+          total_settlements: data.settlements.total_settlements,
+          total_movements: data.settlements.total_movements,
+          total_amount: data.settlements.total_amount,
+          total_fees: data.settlements.total_fees,
+          total_acq: data.settlements.total_acq,
+          total_sttle: data.settlements.total_sttle,
+        },
+      ]);
       return;
     }
-    const prev = document.body.innerHTML;
-    const content = reportRef.current.cloneNode(true) as HTMLElement;
-    content.classList.add('report-print-root');
-    const printWin = window.open('', '_blank', 'noopener,noreferrer');
-    if (!printWin) {
-      window.print();
+    if (activeTab === 'tasks') {
+      downloadCsv(`report_tasks_${suffix}_page_${data.tasks.page}.csv`, data.tasks.rows.map((r) => ({
+        done_at: r.done_at,
+        done_date: r.done_date,
+        executor: idToName.get(r.user_id) || r.user_id,
+        task_type: r.task_type,
+        category: r.category_name,
+        template: r.template_title,
+        status: r.result_status,
+        duration_minutes: r.duration_minutes,
+        coverage: r.assigned_to_user_id != null && r.assigned_to_user_id !== r.user_id ? 1 : 0,
+      })));
       return;
     }
-    printWin.document.write(`
-      <!DOCTYPE html><html dir="rtl"><head>
-        <meta charset="utf-8"><title>التقرير</title>
-        <style>
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif; padding: 24px; color: #0f172a; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          .report-print-root { max-width: 100%; }
-          .report-print-root .no-print { display: none !important; }
-          .report-print-root table { width: 100%; border-collapse: collapse; margin: 12px 0; }
-          .report-print-root th, .report-print-root td { border: 1px solid #e2e8f0; padding: 8px 12px; text-align: right; }
-          .report-print-root th { background: #026174; color: #fff; font-weight: 600; }
-          .report-print-root tr:nth-child(even) { background: #f8fafc; }
-          .report-print-root .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
-          .report-print-root .kpi-card { background: linear-gradient(135deg, #026174, #068294); color: #fff; padding: 16px; border-radius: 12px; text-align: center; }
-          .report-print-root .kpi-card .value { font-size: 1.5rem; font-weight: 700; }
-          .report-print-root h1 { font-size: 1.5rem; margin-bottom: 8px; }
-          .report-print-root h2 { font-size: 1.1rem; margin: 16px 0 8px; padding-bottom: 4px; border-bottom: 2px solid #068294; }
-          .report-print-root .chart-placeholder { height: 200px; background: #f1f5f9; border-radius: 8px; margin: 12px 0; display: flex; align-items: center; justify-content: center; color: #64748b; }
-          .report-print-root .employee-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-          .report-print-root .employee-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; text-align: center; }
-          .report-print-root .employee-card img { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; margin: 0 auto 8px; display: block; }
-        </style>
-      </head><body>${content.outerHTML}</body></html>`);
-    printWin.document.close();
-    printWin.focus();
-    setTimeout(() => {
-      printWin.print();
-      printWin.close();
-    }, 400);
+    if (activeTab === 'employees') {
+      downloadCsv(`report_employees_${suffix}.csv`, data.employees.map((e) => ({
+        id: e.id,
+        name: e.name,
+        attendance_days: e.attendance_days,
+        executed_total: e.executed_total,
+        scheduled_executed: e.scheduled_executed,
+        ad_hoc_executed: e.ad_hoc_executed,
+        on_time: e.on_time,
+        late: e.late,
+        coverage: e.coverage,
+        avg_duration_minutes: e.avg_duration_minutes,
+        total_duration_minutes: e.total_duration_minutes,
+      })));
+      return;
+    }
+    if (activeTab === 'coverage') {
+      downloadCsv(`report_coverage_${suffix}.csv`, (data.coverage || []).map((r) => ({
+        done_by: idToName.get(r.done_by_user_id) || r.done_by_user_id,
+        assigned_to: idToName.get(r.assigned_to_user_id) || r.assigned_to_user_id,
+        count: r.count,
+      })));
+      return;
+    }
+    if (activeTab === 'settlements') {
+      downloadCsv(`report_settlements_by_bank_${suffix}.csv`, data.settlements.byBank.map((r) => ({
+        bank_name: r.bank_name,
+        settlement_count: r.settlement_count,
+        total_movements: r.total_movements,
+        total_amount: r.total_amount,
+        total_fees: r.total_fees,
+        total_acq: r.total_acq,
+        total_sttle: r.total_sttle,
+      })));
+      return;
+    }
+    downloadCsv(`report_systems_audit_${suffix}.csv`, data.audit.map((r) => ({
+      created_at: r.created_at,
+      user: r.user_id != null ? (idToName.get(r.user_id) || r.user_id) : '',
+      action: r.action,
+      entity_type: r.entity_type,
+      entity_id: r.entity_id,
+      details: JSON.stringify(r.details ?? {}),
+    })));
   };
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">التقرير</h1>
+          <h1 className="text-3xl font-bold tracking-tight">التقارير</h1>
           <p className="text-muted-foreground mt-1">
-            محصلات حسب المصرف، مهام حسب الفئة والقالب، توزيع الموظفين
+            تقرير شامل لكل ما قام به القسم خلال الفترة (حسب تاريخ التنفيذ)
           </p>
         </div>
         {data && (
-          <Button variant="outline" size="sm" className="no-print gap-2" onClick={handlePrint}>
-            <Printer className="h-4 w-4" />
-            طباعة
-          </Button>
+          <div className="no-print flex gap-2">
+            <Button variant="outline" size="sm" className="gap-2" onClick={handleExport}>
+              تصدير CSV
+            </Button>
+            <Button variant="outline" size="sm" className="gap-2" onClick={handlePrint}>
+              <Printer className="h-4 w-4" />
+              طباعة
+            </Button>
+          </div>
         )}
       </div>
 
@@ -387,7 +623,14 @@ export function ReportsV2() {
                 />
               </>
             )}
-            <Button onClick={() => refetch()}>عرض التقرير</Button>
+            <Button
+              onClick={() => {
+                setTasksPage(1);
+                refetch();
+              }}
+            >
+              عرض التقرير
+            </Button>
           </div>
           {data && (
             <p className="text-sm text-muted-foreground mt-2">
@@ -396,6 +639,28 @@ export function ReportsV2() {
           )}
         </CardContent>
       </Card>
+
+      {/* Tabs */}
+      <div className="no-print flex flex-wrap gap-2">
+        <Button variant={activeTab === 'summary' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('summary')}>
+          ملخص
+        </Button>
+        <Button variant={activeTab === 'tasks' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('tasks')}>
+          المهام
+        </Button>
+        <Button variant={activeTab === 'employees' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('employees')}>
+          الموظفون
+        </Button>
+        <Button variant={activeTab === 'coverage' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('coverage')}>
+          التغطية
+        </Button>
+        <Button variant={activeTab === 'settlements' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('settlements')}>
+          التسويات
+        </Button>
+        <Button variant={activeTab === 'systems' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('systems')}>
+          أنظمة/سجلات
+        </Button>
+      </div>
 
       {isLoading ? (
         <div className="space-y-6">
@@ -422,12 +687,48 @@ export function ReportsV2() {
           animate="show"
         >
           {/* KPI علوي */}
-          <motion.div variants={item} className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <motion.div variants={item} className="grid grid-cols-2 md:grid-cols-6 gap-4">
+            <Card className="overflow-hidden border-0 shadow-lg" style={{ background: KPI_BG }}>
+              <CardContent className="pt-4 pb-4 text-white">
+                <div className="flex items-center gap-2">
+                  <FileCheck className="h-5 w-5 opacity-90" />
+                  <span className="text-sm font-medium opacity-90">مهام منجزة</span>
+                </div>
+                <p className="mt-1 text-2xl font-bold tabular-nums">{num(totalExecutedTasks)}</p>
+              </CardContent>
+            </Card>
+            <Card className="overflow-hidden border-0 shadow-lg" style={{ background: KPI_BG }}>
+              <CardContent className="pt-4 pb-4 text-white">
+                <div className="flex items-center gap-2">
+                  <PieChartIcon className="h-5 w-5 opacity-90" />
+                  <span className="text-sm font-medium opacity-90">في الوقت</span>
+                </div>
+                <p className="mt-1 text-2xl font-bold tabular-nums">{num(dept?.on_time ?? 0)}</p>
+              </CardContent>
+            </Card>
+            <Card className="overflow-hidden border-0 shadow-lg" style={{ background: KPI_BG }}>
+              <CardContent className="pt-4 pb-4 text-white">
+                <div className="flex items-center gap-2">
+                  <LayoutList className="h-5 w-5 opacity-90" />
+                  <span className="text-sm font-medium opacity-90">متأخرة</span>
+                </div>
+                <p className="mt-1 text-2xl font-bold tabular-nums">{num(dept?.late ?? 0)}</p>
+              </CardContent>
+            </Card>
+            <Card className="overflow-hidden border-0 shadow-lg" style={{ background: KPI_BG }}>
+              <CardContent className="pt-4 pb-4 text-white">
+                <div className="flex items-center gap-2">
+                  <Users className="h-5 w-5 opacity-90" />
+                  <span className="text-sm font-medium opacity-90">تغطية</span>
+                </div>
+                <p className="mt-1 text-2xl font-bold tabular-nums">{num(dept?.coverage ?? 0)}</p>
+              </CardContent>
+            </Card>
             <Card className="overflow-hidden border-0 shadow-lg" style={{ background: KPI_BG }}>
               <CardContent className="pt-4 pb-4 text-white">
                 <div className="flex items-center gap-2">
                   <Banknote className="h-5 w-5 opacity-90" />
-                  <span className="text-sm font-medium opacity-90">إجمالي التسويات</span>
+                  <span className="text-sm font-medium opacity-90">عدد التسويات</span>
                 </div>
                 <p className="mt-1 text-2xl font-bold tabular-nums">{num(totalSettlements)}</p>
               </CardContent>
@@ -435,25 +736,7 @@ export function ReportsV2() {
             <Card className="overflow-hidden border-0 shadow-lg" style={{ background: KPI_BG }}>
               <CardContent className="pt-4 pb-4 text-white">
                 <div className="flex items-center gap-2">
-                  <FileCheck className="h-5 w-5 opacity-90" />
-                  <span className="text-sm font-medium opacity-90">إجمالي المهام</span>
-                </div>
-                <p className="mt-1 text-2xl font-bold tabular-nums">{num(totalTasks)}</p>
-              </CardContent>
-            </Card>
-            <Card className="overflow-hidden border-0 shadow-lg" style={{ background: KPI_BG }}>
-              <CardContent className="pt-4 pb-4 text-white">
-                <div className="flex items-center gap-2">
                   <Building2 className="h-5 w-5 opacity-90" />
-                  <span className="text-sm font-medium opacity-90">المصارف</span>
-                </div>
-                <p className="mt-1 text-2xl font-bold tabular-nums">{num(settlementsByBank.length)}</p>
-              </CardContent>
-            </Card>
-            <Card className="overflow-hidden border-0 shadow-lg" style={{ background: KPI_BG }}>
-              <CardContent className="pt-4 pb-4 text-white">
-                <div className="flex items-center gap-2">
-                  <Users className="h-5 w-5 opacity-90" />
                   <span className="text-sm font-medium opacity-90">الموظفون</span>
                 </div>
                 <p className="mt-1 text-2xl font-bold tabular-nums">{num(employees.length)}</p>
@@ -461,292 +744,613 @@ export function ReportsV2() {
             </Card>
           </motion.div>
 
-          {/* 1. المحصلات */}
-          <motion.div variants={item}>
-            <Card className="overflow-hidden shadow-md print:break-inside-avoid">
-              <CardHeader className="bg-slate-50/80 border-b">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Banknote className="h-5 w-5 text-[#026174]" />
-                  المحصلات — التسويات حسب المصرف
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-6 space-y-6">
-                {settlementsByBank.length > 0 ? (
-                  <>
-                    <div className="h-80">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart
-                          data={settlementsByBank}
-                          layout="vertical"
-                          margin={{ left: 140, right: 24 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                          <XAxis type="number" tickFormatter={(v) => num(v)} stroke="#64748b" />
-                          <YAxis
-                            type="category"
-                            dataKey="bank_name"
-                            width={130}
-                            tick={{ fontSize: 12 }}
-                            stroke="#64748b"
-                          />
-                          <Tooltip
-                            formatter={(v: number) => [num(v), 'عدد التسويات']}
-                            contentStyle={{ borderRadius: 8, border: '1px solid #e2e8f0' }}
-                          />
-                          <Bar
-                            dataKey="settlement_count"
-                            name="تسويات"
-                            fill="url(#barGradient)"
-                            radius={[0, 4, 4, 0]}
-                            maxBarSize={32}
-                          />
-                          <defs>
-                            <linearGradient id="barGradient" x1="0" y1="0" x2="1" y2="0">
-                              <stop offset="0%" stopColor="#026174" />
-                              <stop offset="100%" stopColor="#068294" />
-                            </linearGradient>
-                          </defs>
-                        </BarChart>
-                      </ResponsiveContainer>
+          {/* Summary Tab */}
+          {activeTab === 'summary' && (
+            <>
+              <motion.div variants={item}>
+                <Card className="overflow-hidden shadow-md print:break-inside-avoid">
+                  <CardHeader className="bg-slate-50/80 border-b">
+                    <CardTitle className="flex items-center gap-2 text-lg">
+                      <FileCheck className="h-5 w-5 text-[#026174]" />
+                      ملخص القسم
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="rounded-xl border p-4">
+                        <div className="text-sm text-muted-foreground">تقسيم المهام المنجزة</div>
+                        <div className="mt-2 flex justify-between">
+                          <span>مجدولة</span>
+                          <span className="font-mono">{num(dept?.scheduled_executed ?? 0)}</span>
+                        </div>
+                        <div className="mt-1 flex justify-between">
+                          <span>إضافية</span>
+                          <span className="font-mono">{num(dept?.ad_hoc_executed ?? 0)}</span>
+                        </div>
+                      </div>
+                      <div className="rounded-xl border p-4">
+                        <div className="text-sm text-muted-foreground">نسبة الإنجاز في الوقت</div>
+                        <div className="mt-2 text-2xl font-bold tabular-nums">{num(onTimePct)}%</div>
+                        <div className="mt-2 h-2 rounded-full bg-slate-200 overflow-hidden">
+                          <div className="h-full" style={{ width: `${onTimePct}%`, background: 'linear-gradient(90deg, #026174, #068294)' }} />
+                        </div>
+                      </div>
+                      <div className="rounded-xl border p-4">
+                        <div className="text-sm text-muted-foreground">متوسط مدة التنفيذ</div>
+                        <div className="mt-2 text-2xl font-bold tabular-nums">
+                          {dept?.avg_duration_minutes != null ? `${num(dept.avg_duration_minutes)} د` : '—'}
+                        </div>
+                        <div className="mt-1 text-sm text-muted-foreground">
+                          إجمالي: {num(dept?.total_duration_minutes ?? 0)} دقيقة
+                        </div>
+                      </div>
                     </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              {/* Settlements by bank (chart + table) */}
+              <motion.div variants={item}>
+                <Card className="overflow-hidden shadow-md print:break-inside-avoid">
+                  <CardHeader className="bg-slate-50/80 border-b">
+                    <CardTitle className="flex items-center gap-2 text-lg">
+                      <Banknote className="h-5 w-5 text-[#026174]" />
+                      التسويات الحكومية — حسب المصرف
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-6 space-y-6">
+                    {settlementsByBank.length > 0 ? (
+                      <>
+                        <div className="h-80">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={settlementsByBank} layout="vertical" margin={{ left: 140, right: 24 }}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                              <XAxis type="number" tickFormatter={(v) => num(v)} stroke="#64748b" />
+                              <YAxis type="category" dataKey="bank_name" width={130} tick={{ fontSize: 12 }} stroke="#64748b" />
+                              <Tooltip formatter={(v: number) => [num(v), 'عدد التسويات']} contentStyle={{ borderRadius: 8, border: '1px solid #e2e8f0' }} />
+                              <Bar dataKey="settlement_count" name="تسويات" fill="url(#barGradient)" radius={[0, 4, 4, 0]} maxBarSize={32} />
+                              <defs>
+                                <linearGradient id="barGradient" x1="0" y1="0" x2="1" y2="0">
+                                  <stop offset="0%" stopColor="#026174" />
+                                  <stop offset="100%" stopColor="#068294" />
+                                </linearGradient>
+                              </defs>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-slate-100 hover:bg-slate-100">
+                              <TableHead>المصرف</TableHead>
+                              <TableHead className="text-left font-mono">عدد التسويات</TableHead>
+                              <TableHead className="text-left font-mono">عدد الحركات</TableHead>
+                              <TableHead className="text-left font-mono">مبلغ STTLE</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {settlementsByBank.map((row, i) => (
+                              <TableRow key={i} className="hover:bg-slate-50">
+                                <TableCell className="font-medium">{row.bank_name}</TableCell>
+                                <TableCell className="font-mono text-left">{num(row.settlement_count)}</TableCell>
+                                <TableCell className="font-mono text-left">{num(row.total_movements)}</TableCell>
+                                <TableCell className="font-mono text-left">{num(Math.round(row.total_sttle))}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </>
+                    ) : (
+                      <p className="text-muted-foreground py-8 text-center">لا توجد تسويات في الفترة المحددة.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              {/* Tasks by category */}
+              <motion.div variants={item}>
+                <Card className="overflow-hidden shadow-md print:break-inside-avoid">
+                  <CardHeader className="bg-slate-50/80 border-b">
+                    <CardTitle className="flex items-center gap-2 text-lg">
+                      <PieChartIcon className="h-5 w-5 text-[#026174]" />
+                      المهام — حسب الفئة
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-6 space-y-6">
+                    {tasksByCategory.length > 0 ? (
+                      <>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                          <div className="h-80">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <PieChart>
+                                <Pie
+                                  data={tasksByCategory}
+                                  dataKey="executed_total"
+                                  nameKey="category_name"
+                                  cx="50%"
+                                  cy="50%"
+                                  outerRadius={110}
+                                  innerRadius={40}
+                                  paddingAngle={2}
+                                  label={({ category_name, executed_total }) => `${category_name}: ${num(executed_total)}`}
+                                >
+                                  {tasksByCategory.map((_, i) => (
+                                    <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} stroke="#fff" strokeWidth={2} />
+                                  ))}
+                                </Pie>
+                                <Tooltip formatter={(v: number, _: unknown, props: { payload: { category_name: string } }) => [num(v), props.payload?.category_name ?? 'مهام']} contentStyle={{ borderRadius: 8, border: '1px solid #e2e8f0' }} />
+                                <Legend />
+                              </PieChart>
+                            </ResponsiveContainer>
+                          </div>
+                          <div className="h-80">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart data={tasksByCategory} margin={{ top: 12, right: 24, left: 12, bottom: 12 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                <XAxis dataKey="category_name" tick={{ fontSize: 11 }} stroke="#64748b" />
+                                <YAxis tickFormatter={(v) => num(v)} stroke="#64748b" />
+                                <Tooltip formatter={(v: number) => [num(v), 'مهام']} contentStyle={{ borderRadius: 8, border: '1px solid #e2e8f0' }} />
+                                <Bar dataKey="executed_total" name="مهام" fill="#068294" radius={[4, 4, 0, 0]} maxBarSize={48} />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-muted-foreground py-8 text-center">لا توجد مهام منفذة في الفترة المحددة.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+            </>
+          )}
+
+          {/* Tasks Tab */}
+          {activeTab === 'tasks' && (
+            <>
+              <motion.div variants={item}>
+                <Card className="overflow-hidden shadow-md print:break-inside-avoid">
+                  <CardHeader className="bg-slate-50/80 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <CardTitle className="flex items-center gap-2 text-lg">
+                      <LayoutList className="h-5 w-5 text-[#026174]" />
+                      كل المهام المنفذة (حسب التنفيذ)
+                    </CardTitle>
+                    <div className="no-print flex flex-wrap items-center gap-2">
+                      <span className="text-sm text-muted-foreground">لكل صفحة</span>
+                      <select
+                        className="border rounded-md px-2 py-1 text-sm"
+                        value={tasksLimit}
+                        onChange={(e) => {
+                          setTasksLimit(parseInt(e.target.value, 10) || 50);
+                          setTasksPage(1);
+                        }}
+                      >
+                        {[25, 50, 100, 200].map((n) => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setTasksPage((p) => Math.max(1, p - 1))}
+                        disabled={(data.tasks?.page ?? 1) <= 1}
+                      >
+                        السابق
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setTasksPage((p) => Math.min(data.tasks.totalPages || 1, p + 1))}
+                        disabled={(data.tasks?.page ?? 1) >= (data.tasks?.totalPages ?? 1)}
+                      >
+                        التالي
+                      </Button>
+                      <span className="text-sm text-muted-foreground">
+                        صفحة {num(data.tasks.page)} / {num(data.tasks.totalPages)}
+                      </span>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="pt-6">
+                    {data.tasks.rows.length > 0 ? (
+                      <div className="rounded-lg border overflow-hidden">
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-slate-100 hover:bg-slate-100">
+                              <TableHead>التاريخ</TableHead>
+                              <TableHead>المنفذ</TableHead>
+                              <TableHead>النوع</TableHead>
+                              <TableHead>الفئة</TableHead>
+                              <TableHead>القالب</TableHead>
+                              <TableHead className="text-left font-mono">الحالة</TableHead>
+                              <TableHead className="text-left font-mono">المدة</TableHead>
+                              <TableHead className="text-left font-mono">تغطية</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {data.tasks.rows.map((r) => {
+                              const name = idToName.get(r.user_id) || `#${r.user_id}`;
+                              const isCoverage = r.assigned_to_user_id != null && r.assigned_to_user_id !== r.user_id;
+                              return (
+                                <TableRow key={r.execution_id} className="hover:bg-slate-50">
+                                  <TableCell className="font-mono">{r.done_at ?? r.done_date}</TableCell>
+                                  <TableCell className="font-medium">{name}</TableCell>
+                                  <TableCell>{r.task_type === 'scheduled' ? 'مجدولة' : 'إضافية'}</TableCell>
+                                  <TableCell>{r.category_name || 'بدون فئة'}</TableCell>
+                                  <TableCell title={r.template_title || ''}>{r.template_title || 'بدون قالب'}</TableCell>
+                                  <TableCell className="font-mono text-left">{r.result_status}</TableCell>
+                                  <TableCell className="font-mono text-left">{r.duration_minutes != null ? `${num(r.duration_minutes)} د` : '—'}</TableCell>
+                                  <TableCell className="font-mono text-left">{isCoverage ? 'نعم' : '—'}</TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground py-8 text-center">لا توجد مهام منفذة ضمن الفترة.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              {/* Template/Category breakdown */}
+              <TemplateCategoryTable
+                rows={filteredTemplateCategory.map((r) => ({
+                  template_title: r.template_title,
+                  category_name: r.category_name,
+                  executed_total: r.executed_total,
+                }))}
+                templateSearch={templateSearch}
+                onTemplateSearchChange={setTemplateSearch}
+                num={num}
+              />
+            </>
+          )}
+
+          {/* Employees Tab */}
+          {activeTab === 'employees' && (
+            <motion.div variants={item}>
+              <Card className="overflow-hidden shadow-md print:break-inside-avoid">
+                <CardHeader className="bg-slate-50/80 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Users className="h-5 w-5 text-[#026174]" />
+                    أداء الموظفين خلال الفترة
+                  </CardTitle>
+                  <div className="flex gap-2 no-print">
+                    <Button variant={employeeSort === 'tasks' ? 'default' : 'outline'} size="sm" onClick={() => setEmployeeSort('tasks')}>
+                      حسب المهام
+                    </Button>
+                    <Button variant={employeeSort === 'attendance' ? 'default' : 'outline'} size="sm" onClick={() => setEmployeeSort('attendance')}>
+                      حسب الحضور
+                    </Button>
+                    <Button variant={employeeSort === 'name' ? 'default' : 'outline'} size="sm" onClick={() => setEmployeeSort('name')}>
+                      حسب الاسم
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-6">
+                  {employees.length > 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                      <AnimatePresence mode="popLayout">
+                        {employees.map((emp, idx) => {
+                          const avatarSrc = emp.avatar_url
+                            ? emp.avatar_url.startsWith('http')
+                              ? emp.avatar_url
+                              : `${window.location.origin}${emp.avatar_url}`
+                            : undefined;
+                          const empOnTimePct = emp.executed_total > 0 ? Math.round((emp.on_time / emp.executed_total) * 100) : 0;
+                          return (
+                            <motion.div key={emp.id} layout initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} transition={{ delay: idx * 0.02 }}>
+                              <Card className="overflow-hidden h-full transition-shadow hover:shadow-lg border-slate-200">
+                                <CardContent className="pt-5 pb-5">
+                                  <div className="flex flex-col items-center text-center gap-3">
+                                    <Avatar src={avatarSrc ?? undefined} alt={emp.name} fallback={emp.name?.slice(0, 1)?.toUpperCase() ?? '?'} size="xl" className="h-20 w-20 ring-2 ring-slate-200" />
+                                    <div className="w-full">
+                                      <p className="font-semibold text-slate-800">{emp.name}</p>
+                                      <div className="mt-2 space-y-1.5 text-sm">
+                                        <div className="flex justify-between">
+                                          <span className="text-muted-foreground">حضور</span>
+                                          <span className="font-mono text-foreground">{num(emp.attendance_days)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-muted-foreground">منجزة</span>
+                                          <span className="font-mono text-foreground">{num(emp.executed_total)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-muted-foreground">مجدولة/إضافية</span>
+                                          <span className="font-mono text-foreground">
+                                            {num(emp.scheduled_executed)} / {num(emp.ad_hoc_executed)}
+                                          </span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-muted-foreground">في الوقت</span>
+                                          <span className="font-mono text-foreground">{num(emp.on_time)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-muted-foreground">متأخرة</span>
+                                          <span className="font-mono text-foreground">{num(emp.late)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span className="text-muted-foreground">تغطية</span>
+                                          <span className="font-mono text-foreground">{num(emp.coverage)}</span>
+                                        </div>
+                                      </div>
+                                      {emp.executed_total > 0 && (
+                                        <div className="mt-3">
+                                          <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                                            <span>نسبة الإنجاز في الوقت</span>
+                                            <span className="font-mono">{num(empOnTimePct)}%</span>
+                                          </div>
+                                          <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+                                            <motion.div className="h-full rounded-full" style={{ background: 'linear-gradient(90deg, #026174, #068294)' }} initial={{ width: 0 }} animate={{ width: `${empOnTimePct}%` }} transition={{ duration: 0.6, delay: idx * 0.03 }} />
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            </motion.div>
+                          );
+                        })}
+                      </AnimatePresence>
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground py-8 text-center">لا يوجد موظفون.</p>
+                  )}
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
+          {/* Coverage Tab */}
+          {activeTab === 'coverage' && (
+            <motion.div variants={item}>
+              <Card className="overflow-hidden shadow-md print:break-inside-avoid">
+                <CardHeader className="bg-slate-50/80 border-b">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Users className="h-5 w-5 text-[#026174]" />
+                    التغطية — من قام بمهام الآخرين
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-6 space-y-4">
+                  {coverageRows.length > 0 ? (
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-slate-100 hover:bg-slate-100">
+                          <TableHead>المنفذ</TableHead>
+                          <TableHead>المكلف</TableHead>
+                          <TableHead className="text-left font-mono">العدد</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {coverageRows.map((r, i) => (
+                          <TableRow key={i} className="hover:bg-slate-50">
+                            <TableCell className="font-medium">{idToName.get(r.done_by_user_id) || `#${r.done_by_user_id}`}</TableCell>
+                            <TableCell>{idToName.get(r.assigned_to_user_id) || `#${r.assigned_to_user_id}`}</TableCell>
+                            <TableCell className="font-mono text-left">{num(r.count)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  ) : (
+                    <p className="text-muted-foreground py-8 text-center">لا توجد تغطية ضمن الفترة.</p>
+                  )}
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
+          {/* Settlements Tab */}
+          {activeTab === 'settlements' && (
+            <motion.div variants={item}>
+              <Card className="overflow-hidden shadow-md print:break-inside-avoid">
+                <CardHeader className="bg-slate-50/80 border-b">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Banknote className="h-5 w-5 text-[#026174]" />
+                    التسويات الحكومية — مؤشرات وتحليل
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-6 space-y-6">
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+                    <div className="rounded-xl border p-3">
+                      <div className="text-xs text-muted-foreground">التسويات</div>
+                      <div className="font-mono text-lg">{num(data.settlements.total_settlements)}</div>
+                    </div>
+                    <div className="rounded-xl border p-3">
+                      <div className="text-xs text-muted-foreground">الحركات</div>
+                      <div className="font-mono text-lg">{num(data.settlements.total_movements)}</div>
+                    </div>
+                    <div className="rounded-xl border p-3">
+                      <div className="text-xs text-muted-foreground">Amount</div>
+                      <div className="font-mono text-lg">{num(Math.round(data.settlements.total_amount))}</div>
+                    </div>
+                    <div className="rounded-xl border p-3">
+                      <div className="text-xs text-muted-foreground">Fees</div>
+                      <div className="font-mono text-lg">{num(Math.round(data.settlements.total_fees))}</div>
+                    </div>
+                    <div className="rounded-xl border p-3">
+                      <div className="text-xs text-muted-foreground">ACQ</div>
+                      <div className="font-mono text-lg">{num(Math.round(data.settlements.total_acq))}</div>
+                    </div>
+                    <div className="rounded-xl border p-3">
+                      <div className="text-xs text-muted-foreground">STTLE</div>
+                      <div className="font-mono text-lg">{num(Math.round(data.settlements.total_sttle))}</div>
+                    </div>
+                  </div>
+                  {settlementsByBank.length > 0 ? (
                     <Table>
                       <TableHeader>
                         <TableRow className="bg-slate-100 hover:bg-slate-100">
                           <TableHead>المصرف</TableHead>
-                          <TableHead className="text-left font-mono">عدد التسويات</TableHead>
+                          <TableHead className="text-left font-mono">التسويات</TableHead>
+                          <TableHead className="text-left font-mono">الحركات</TableHead>
+                          <TableHead className="text-left font-mono">STTLE</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {settlementsByBank.map((row, i) => (
+                        {settlementsByBank.map((r, i) => (
                           <TableRow key={i} className="hover:bg-slate-50">
-                            <TableCell className="font-medium">{row.bank_name}</TableCell>
-                            <TableCell className="font-mono text-left">{num(row.settlement_count)}</TableCell>
+                            <TableCell className="font-medium">{r.bank_name}</TableCell>
+                            <TableCell className="font-mono text-left">{num(r.settlement_count)}</TableCell>
+                            <TableCell className="font-mono text-left">{num(r.total_movements)}</TableCell>
+                            <TableCell className="font-mono text-left">{num(Math.round(r.total_sttle))}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
-                  </>
-                ) : (
-                  <p className="text-muted-foreground py-8 text-center">لا توجد تسويات في الفترة المحددة.</p>
-                )}
-              </CardContent>
-            </Card>
-          </motion.div>
+                  ) : (
+                    <p className="text-muted-foreground py-8 text-center">لا توجد تسويات ضمن الفترة.</p>
+                  )}
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
 
-          {/* 2. المهام حسب الفئة */}
-          <motion.div variants={item}>
-            <Card className="overflow-hidden shadow-md print:break-inside-avoid">
-              <CardHeader className="bg-slate-50/80 border-b">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <PieChartIcon className="h-5 w-5 text-[#026174]" />
-                  المهام حسب الفئة
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-6 space-y-6">
-                {tasksByCategory.length > 0 ? (
-                  <>
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      <div className="h-80">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={tasksByCategory}
-                              dataKey="task_count"
-                              nameKey="category_name"
-                              cx="50%"
-                              cy="50%"
-                              outerRadius={110}
-                              innerRadius={40}
-                              paddingAngle={2}
-                              label={({ category_name, task_count }) =>
-                                `${category_name}: ${num(task_count)}`
-                              }
-                            >
-                              {tasksByCategory.map((_, i) => (
-                                <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} stroke="#fff" strokeWidth={2} />
-                              ))}
-                            </Pie>
-                            <Tooltip
-                              formatter={(v: number, _: unknown, props: { payload: { category_name: string } }) => [
-                                num(v),
-                                props.payload?.category_name ?? 'مهام',
-                              ]}
-                              contentStyle={{ borderRadius: 8, border: '1px solid #e2e8f0' }}
-                            />
-                            <Legend />
-                          </PieChart>
-                        </ResponsiveContainer>
+          {/* Systems Tab: CT + Disbursements + Audit */}
+          {activeTab === 'systems' && (
+            <>
+              <motion.div variants={item}>
+                <Card className="overflow-hidden shadow-md print:break-inside-avoid">
+                  <CardHeader className="bg-slate-50/80 border-b">
+                    <CardTitle className="flex items-center gap-2 text-lg">
+                      <FileCheck className="h-5 w-5 text-[#026174]" />
+                      CT Matching
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-6 space-y-4">
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="rounded-xl border p-3">
+                        <div className="text-xs text-muted-foreground">الإجمالي</div>
+                        <div className="font-mono text-lg">{num(data.ctMatching.total)}</div>
                       </div>
-                      <div className="h-80">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={tasksByCategory} margin={{ top: 12, right: 24, left: 12, bottom: 12 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                            <XAxis dataKey="category_name" tick={{ fontSize: 11 }} stroke="#64748b" />
-                            <YAxis tickFormatter={(v) => num(v)} stroke="#64748b" />
-                            <Tooltip
-                              formatter={(v: number) => [num(v), 'مهام']}
-                              contentStyle={{ borderRadius: 8, border: '1px solid #e2e8f0' }}
-                            />
-                            <Bar
-                              dataKey="task_count"
-                              name="مهام"
-                              fill="#068294"
-                              radius={[4, 4, 0, 0]}
-                              maxBarSize={48}
-                            />
-                          </BarChart>
-                        </ResponsiveContainer>
+                      <div className="rounded-xl border p-3">
+                        <div className="text-xs text-muted-foreground">مطابقة</div>
+                        <div className="font-mono text-lg">{num(data.ctMatching.matched)}</div>
+                      </div>
+                      <div className="rounded-xl border p-3">
+                        <div className="text-xs text-muted-foreground">غير مطابقة</div>
+                        <div className="font-mono text-lg">{num(data.ctMatching.notMatched)}</div>
                       </div>
                     </div>
-                    <Table>
-                      <TableHeader>
-                        <TableRow className="bg-slate-100 hover:bg-slate-100">
-                          <TableHead>الفئة</TableHead>
-                          <TableHead className="text-left font-mono">عدد المهام</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {tasksByCategory.map((row, i) => (
-                          <TableRow key={i} className="hover:bg-slate-50">
-                            <TableCell className="font-medium">{row.category_name}</TableCell>
-                            <TableCell className="font-mono text-left">{num(row.task_count)}</TableCell>
+                    {data.ctMatching.records.length > 0 ? (
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-slate-100 hover:bg-slate-100">
+                            <TableHead>الفترة</TableHead>
+                            <TableHead className="text-left font-mono">CT</TableHead>
+                            <TableHead className="text-left font-mono">ACQ</TableHead>
+                            <TableHead className="text-left font-mono">Fees</TableHead>
+                            <TableHead>الحالة</TableHead>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </>
-                ) : (
-                  <p className="text-muted-foreground py-8 text-center">لا توجد مهام في الفترة المحددة.</p>
-                )}
-              </CardContent>
-            </Card>
-          </motion.div>
+                        </TableHeader>
+                        <TableBody>
+                          {data.ctMatching.records.map((r) => (
+                            <TableRow key={r.id} className="hover:bg-slate-50">
+                              <TableCell className="font-mono">{r.sttl_date_from} → {r.sttl_date_to}</TableCell>
+                              <TableCell className="font-mono text-left">{num(Math.round(r.ct_value))}</TableCell>
+                              <TableCell className="font-mono text-left">{num(Math.round(r.sum_acq))}</TableCell>
+                              <TableCell className="font-mono text-left">{num(Math.round(r.sum_fees))}</TableCell>
+                              <TableCell>{r.match_status || '—'}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    ) : (
+                      <p className="text-muted-foreground py-6 text-center">لا توجد سجلات CT ضمن الفترة.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
 
-          {/* 3. المهام حسب القالب والفئة — جدول افتراضي عند كثرة الصفوف */}
-          <TemplateCategoryTable
-            rows={filteredTemplateCategory}
-            templateSearch={templateSearch}
-            onTemplateSearchChange={setTemplateSearch}
-            num={num}
-          />
+              <motion.div variants={item}>
+                <Card className="overflow-hidden shadow-md print:break-inside-avoid">
+                  <CardHeader className="bg-slate-50/80 border-b">
+                    <CardTitle className="flex items-center gap-2 text-lg">
+                      <Banknote className="h-5 w-5 text-[#026174]" />
+                      صرف مستحقات التجار
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-6 space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-xl border p-3">
+                        <div className="text-xs text-muted-foreground">عدد عمليات الصرف</div>
+                        <div className="font-mono text-lg">{num(data.merchantDisbursements.count)}</div>
+                      </div>
+                      <div className="rounded-xl border p-3">
+                        <div className="text-xs text-muted-foreground">الإجمالي</div>
+                        <div className="font-mono text-lg">{num(Math.round(data.merchantDisbursements.total_amount))}</div>
+                      </div>
+                    </div>
+                    {data.merchantDisbursements.rows.length > 0 ? (
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-slate-100 hover:bg-slate-100">
+                            <TableHead>التاريخ</TableHead>
+                            <TableHead>التاجر</TableHead>
+                            <TableHead className="text-left font-mono">المبلغ</TableHead>
+                            <TableHead>الحالة</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {data.merchantDisbursements.rows.map((r) => (
+                            <TableRow key={r.id} className="hover:bg-slate-50">
+                              <TableCell className="font-mono">{r.transfer_date}</TableCell>
+                              <TableCell className="font-mono">{r.merchant_id}</TableCell>
+                              <TableCell className="font-mono text-left">{num(Math.round(r.amount))}</TableCell>
+                              <TableCell>{r.status}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    ) : (
+                      <p className="text-muted-foreground py-6 text-center">لا توجد عمليات صرف ضمن الفترة.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
 
-          {/* 4. توزيع الموظفين */}
-          <motion.div variants={item}>
-            <Card className="overflow-hidden shadow-md print:break-inside-avoid">
-              <CardHeader className="bg-slate-50/80 border-b flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Users className="h-5 w-5 text-[#026174]" />
-                  توزيع الموظفين
-                </CardTitle>
-                <div className="flex gap-2 no-print">
-                  <Button
-                    variant={employeeSort === 'tasks' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setEmployeeSort('tasks')}
-                  >
-                    حسب المهام
-                  </Button>
-                  <Button
-                    variant={employeeSort === 'attendance' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setEmployeeSort('attendance')}
-                  >
-                    حسب الحضور
-                  </Button>
-                  <Button
-                    variant={employeeSort === 'name' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setEmployeeSort('name')}
-                  >
-                    حسب الاسم
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-6">
-                {employees.length > 0 ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    <AnimatePresence mode="popLayout">
-                      {employees.map((emp, idx) => {
-                        const avatarSrc = emp.avatar_url
-                          ? emp.avatar_url.startsWith('http')
-                            ? emp.avatar_url
-                            : `${window.location.origin}${emp.avatar_url}`
-                          : undefined;
-                        const onTimePct =
-                          emp.tasks_done > 0
-                            ? Math.round((emp.on_time / emp.tasks_done) * 100)
-                            : 0;
-                        return (
-                          <motion.div
-                            key={emp.id}
-                            layout
-                            initial={{ opacity: 0, scale: 0.96 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            exit={{ opacity: 0 }}
-                            transition={{ delay: idx * 0.02 }}
-                          >
-                            <Card className="overflow-hidden h-full transition-shadow hover:shadow-lg border-slate-200">
-                              <CardContent className="pt-5 pb-5">
-                                <div className="flex flex-col items-center text-center gap-3">
-                                  <Avatar
-                                    src={avatarSrc ?? undefined}
-                                    alt={emp.name}
-                                    fallback={emp.name?.slice(0, 1)?.toUpperCase() ?? '?'}
-                                    size="xl"
-                                    className="h-20 w-20 ring-2 ring-slate-200"
-                                  />
-                                  <div className="w-full">
-                                    <p className="font-semibold text-slate-800">{emp.name}</p>
-                                    <div className="mt-2 space-y-1.5 text-sm">
-                                      <div className="flex justify-between">
-                                        <span className="text-muted-foreground">أيام الحضور</span>
-                                        <span className="font-mono text-foreground">{num(emp.attendance_days)}</span>
-                                      </div>
-                                      <div className="flex justify-between">
-                                        <span className="text-muted-foreground">مهام منجزة</span>
-                                        <span className="font-mono text-foreground">{num(emp.tasks_done)}</span>
-                                      </div>
-                                      <div className="flex justify-between">
-                                        <span className="text-muted-foreground">في الوقت</span>
-                                        <span className="font-mono text-foreground">{num(emp.on_time)}</span>
-                                      </div>
-                                      <div className="flex justify-between">
-                                        <span className="text-muted-foreground">متأخرة</span>
-                                        <span className="font-mono text-foreground">{num(emp.late)}</span>
-                                      </div>
-                                    </div>
-                                    {emp.tasks_done > 0 && (
-                                      <div className="mt-3">
-                                        <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                                          <span>نسبة الإنجاز في الوقت</span>
-                                          <span className="font-mono">{num(onTimePct)}%</span>
-                                        </div>
-                                        <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
-                                          <motion.div
-                                            className="h-full rounded-full"
-                                            style={{ background: 'linear-gradient(90deg, #026174, #068294)' }}
-                                            initial={{ width: 0 }}
-                                            animate={{ width: `${onTimePct}%` }}
-                                            transition={{ duration: 0.6, delay: idx * 0.03 }}
-                                          />
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              </CardContent>
-                            </Card>
-                          </motion.div>
-                        );
-                      })}
-                    </AnimatePresence>
-                  </div>
-                ) : (
-                  <p className="text-muted-foreground py-8 text-center">لا يوجد موظفون.</p>
-                )}
-              </CardContent>
-            </Card>
-          </motion.div>
+              <motion.div variants={item}>
+                <Card className="overflow-hidden shadow-md print:break-inside-avoid">
+                  <CardHeader className="bg-slate-50/80 border-b">
+                    <CardTitle className="flex items-center gap-2 text-lg">
+                      <LayoutList className="h-5 w-5 text-[#026174]" />
+                      سجل التدقيق (الأحدث)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-6">
+                    {data.audit.length > 0 ? (
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-slate-100 hover:bg-slate-100">
+                            <TableHead>الوقت</TableHead>
+                            <TableHead>المستخدم</TableHead>
+                            <TableHead>الإجراء</TableHead>
+                            <TableHead>الكيان</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {data.audit.map((r) => (
+                            <TableRow key={r.id} className="hover:bg-slate-50">
+                              <TableCell className="font-mono">{r.created_at || '—'}</TableCell>
+                              <TableCell>{r.user_id != null ? (idToName.get(r.user_id) || `#${r.user_id}`) : '—'}</TableCell>
+                              <TableCell className="font-mono">{r.action}</TableCell>
+                              <TableCell className="font-mono">
+                                {r.entity_type || '—'}{r.entity_id != null ? `#${r.entity_id}` : ''}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    ) : (
+                      <p className="text-muted-foreground py-6 text-center">لا توجد أحداث تدقيق ضمن الفترة.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+            </>
+          )}
         </motion.div>
       ) : (
         <Card>

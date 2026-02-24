@@ -823,7 +823,7 @@ const OpeningCinematicSlide: React.FC<{ slide: any; currentTime: moment.Moment }
           }}
         >
           <motion.img 
-            src="/logo.png" 
+            src="/logo.png"
             alt="ALSAQI Logo" 
             className="logo-cinematic-main"
             initial={{ filter: 'brightness(0) blur(20px)' }}

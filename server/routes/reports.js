@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getDailyReport, getMonthlyReport, getCoverageReport, getComprehensiveReport, getReportFull, exportToExcel, exportToPdf } = require('../controllers/reportsController');
+const { getDailyReport, getMonthlyReport, getCoverageReport, getComprehensiveReport, getReportFull, getReportV2, exportToExcel, exportToPdf } = require('../controllers/reportsController');
 const { authenticate, requirePermission } = require('../middleware/auth');
 
 router.use(authenticate);
@@ -10,6 +10,7 @@ router.get('/monthly', requirePermission('reports', 'view'), getMonthlyReport);
 router.get('/coverage', requirePermission('reports', 'view'), getCoverageReport);
 router.get('/comprehensive', requirePermission('reports', 'view'), getComprehensiveReport);
 router.get('/full', requirePermission('reports', 'view'), getReportFull);
+router.get('/v2', requirePermission('reports', 'view'), getReportV2);
 router.get('/export', requirePermission('reports', 'export_excel'), exportToExcel);
 router.get('/export-pdf', requirePermission('reports', 'export_pdf'), exportToPdf);
 

@@ -77,7 +77,7 @@ const Layout = () => {
         <nav className="navbar" style={{ background: '#ffffff', borderBottom: '2px solid #2A6E85' }}>
           <div className="navbar-brand">
             <img 
-              src="/logo-icon.png" 
+              src="/logo-icon.png"
               alt="ALSAQI" 
               className="navbar-logo"
               style={{ width: '32px', height: '32px', objectFit: 'contain' }}

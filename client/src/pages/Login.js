@@ -56,7 +56,7 @@ const Login = () => {
       <div className="login-box" style={{ background: '#ffffff', border: '2px solid #2A6E85' }}>
         <div className="login-header">
           <img 
-            src="/logo.png" 
+            src="/logo.png"
             alt="ALSAQI Logo" 
             className="login-logo"
             style={{ 
