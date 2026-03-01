@@ -60,7 +60,9 @@ type Period = 'day' | 'week' | 'month' | 'custom';
 type TabKey = 'summary' | 'tasks' | 'employees' | 'coverage' | 'settlements' | 'systems';
 
 function num(n: number | undefined | null): string {
-  return String(n ?? 0);
+  const v = Number(n ?? 0);
+  if (Number.isNaN(v)) return '0';
+  return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
 
 function downloadCsv(filename: string, rows: Array<Record<string, unknown>>) {

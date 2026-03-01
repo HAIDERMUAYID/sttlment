@@ -993,6 +993,7 @@ const getReportV2 = async (req, res) => {
           DATE(te.done_at AT TIME ZONE '${BAGHDAD}') as done_date,
           te.result_status,
           te.duration_minutes,
+          te.delay_minutes,
           te.done_by_user_id as user_id,
           'scheduled'::text as task_type,
           dt.id as task_id,
@@ -1021,6 +1022,7 @@ const getReportV2 = async (req, res) => {
           DATE(te.done_at AT TIME ZONE '${BAGHDAD}') as done_date,
           te.result_status,
           te.duration_minutes,
+          te.delay_minutes,
           te.done_by_user_id as user_id,
           'ad_hoc'::text as task_type,
           aht.id as task_id,
@@ -1073,11 +1075,12 @@ const getReportV2 = async (req, res) => {
            AVG(duration_minutes)::float as avg_duration_minutes,
            COALESCE(SUM(duration_minutes), 0)::int as total_duration_minutes,
            COUNT(CASE WHEN task_type = 'scheduled' THEN 1 END)::int as scheduled_executed,
-           COUNT(CASE WHEN task_type = 'ad_hoc' THEN 1 END)::int as ad_hoc_executed
+           COUNT(CASE WHEN task_type = 'ad_hoc' THEN 1 END)::int as ad_hoc_executed,
+           (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY delay_minutes) FILTER (WHERE result_status = 'completed_late'))::float as avg_delay_late_minutes
          FROM base_executions`,
         [doneAtFromTs, doneAtToTs, scopedEmpIdsParam, categoryIds, templateIds]
       ),
-      // Aggregates by employee
+      // Aggregates by employee (متوسط التأخير = الوسيط للمهام المتأخرة فقط — يعطي قيمة أقل من المتوسط الحسابي)
       pool.query(
         `${baseExecutionsCte}
          SELECT
@@ -1089,7 +1092,8 @@ const getReportV2 = async (req, res) => {
            AVG(duration_minutes)::float as avg_duration_minutes,
            COALESCE(SUM(duration_minutes), 0)::int as total_duration_minutes,
            COUNT(CASE WHEN task_type = 'scheduled' THEN 1 END)::int as scheduled_executed,
-           COUNT(CASE WHEN task_type = 'ad_hoc' THEN 1 END)::int as ad_hoc_executed
+           COUNT(CASE WHEN task_type = 'ad_hoc' THEN 1 END)::int as ad_hoc_executed,
+           (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY delay_minutes) FILTER (WHERE result_status = 'completed_late'))::float as avg_delay_late_minutes
          FROM base_executions
          GROUP BY user_id`,
         [doneAtFromTs, doneAtToTs, scopedEmpIdsParam, categoryIds, templateIds]
@@ -1155,12 +1159,13 @@ const getReportV2 = async (req, res) => {
          SELECT COUNT(*)::int as total FROM base_executions`,
         [doneAtFromTs, doneAtToTs, scopedEmpIdsParam, categoryIds, templateIds]
       ),
-      // Attendance aggregates (within date range)
+      // Attendance: أيام الحضور + متوسط وقت الحضور (الوقت الأكثر تكراراً للحضور بين 7 صباحاً و12 ظهراً فقط)
       pool.query(
         `SELECT user_id,
                 COUNT(*)::int as days_present,
                 MIN(first_login_at) as earliest_login_at,
-                MAX(first_login_at) as latest_login_at
+                MAX(first_login_at) as latest_login_at,
+                to_char(MODE() WITHIN GROUP (ORDER BY (first_login_at AT TIME ZONE '${BAGHDAD}')::time) FILTER (WHERE (first_login_at AT TIME ZONE '${BAGHDAD}')::time BETWEEN '07:00' AND '12:00'), 'HH24:MI') as mode_login_time
          FROM attendance
          WHERE date >= $1::date AND date <= $2::date
            AND ($3::int[] IS NULL OR user_id = ANY($3::int[]))
@@ -1282,6 +1287,12 @@ const getReportV2 = async (req, res) => {
     const byEmp = Object.fromEntries((byEmployeeAgg.rows || []).map((r) => [String(r.user_id), r]));
     const byAtt = Object.fromEntries((attendanceAgg.rows || []).map((r) => [String(r.user_id), r]));
 
+    const capDelay = (v) => {
+      if (v == null || isNaN(v)) return null;
+      const n = Math.round(parseFloat(v));
+      return Math.min(120, Math.max(0, n));
+    };
+
     const employees = employeesList.map((e) => {
       const agg = byEmp[String(e.id)] || {};
       const att = byAtt[String(e.id)] || {};
@@ -1290,6 +1301,7 @@ const getReportV2 = async (req, res) => {
         name: e.name,
         avatar_url: e.avatar_url || null,
         attendance_days: parseInt(att.days_present || 0, 10),
+        avg_attendance_time: att.mode_login_time ? String(att.mode_login_time).trim() : null,
         executed_total: parseInt(agg.executed_total || 0, 10),
         scheduled_executed: parseInt(agg.scheduled_executed || 0, 10),
         ad_hoc_executed: parseInt(agg.ad_hoc_executed || 0, 10),
@@ -1297,6 +1309,7 @@ const getReportV2 = async (req, res) => {
         late: parseInt(agg.late || 0, 10),
         coverage: parseInt(agg.coverage || 0, 10),
         avg_duration_minutes: agg.avg_duration_minutes != null ? Math.round(parseFloat(agg.avg_duration_minutes)) : null,
+        avg_delay_late_minutes: capDelay(agg.avg_delay_late_minutes),
         total_duration_minutes: parseInt(agg.total_duration_minutes || 0, 10),
       };
     });
@@ -1333,6 +1346,7 @@ const getReportV2 = async (req, res) => {
         late: parseInt(dept.late || 0, 10),
         coverage: parseInt(dept.coverage || 0, 10),
         avg_duration_minutes: dept.avg_duration_minutes != null ? Math.round(parseFloat(dept.avg_duration_minutes)) : null,
+        avg_delay_late_minutes: (() => { const v = dept.avg_delay_late_minutes; if (v == null || isNaN(v)) return null; const n = Math.round(parseFloat(v)); return Math.min(120, Math.max(0, n)); })(),
         total_duration_minutes: parseInt(dept.total_duration_minutes || 0, 10),
         attendance: {
           employees_present: attendanceAgg.rows ? new Set(attendanceAgg.rows.map((r) => String(r.user_id))).size : 0,

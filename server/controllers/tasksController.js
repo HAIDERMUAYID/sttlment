@@ -310,7 +310,52 @@ const executeTask = async (req, res) => {
         }
       }
     }
-    
+
+    // وقت التنفيذ الفعلي (نفس اللحظة للمقارنة وللحفظ)
+    const doneAt = new Date();
+
+    // حساب "في الوقت" vs "متأخرة" من وقت الاستحقاق (due_date_time + grace) مقابل done_at
+    let effectiveResultStatus = resultStatus;
+    let delayMinutes = null;
+    if (resultStatus === 'completed' || resultStatus === 'completed_late') {
+      let dueDateTime = null;
+      let graceMinutes = 0;
+      if (dailyTaskId) {
+        const dueRow = await pool.query(
+          `SELECT dt.due_date_time, COALESCE(s.grace_minutes, 0)::int as grace_minutes
+           FROM daily_tasks dt
+           LEFT JOIN schedules s ON dt.schedule_id = s.id
+           WHERE dt.id = $1`,
+          [dailyTaskId]
+        );
+        if (dueRow.rows[0]) {
+          dueDateTime = dueRow.rows[0].due_date_time;
+          graceMinutes = Math.max(0, parseInt(dueRow.rows[0].grace_minutes, 10) || 0);
+        }
+      } else if (adHocTaskId) {
+        const dueRow = await pool.query(
+          'SELECT due_date_time FROM ad_hoc_tasks WHERE id = $1',
+          [adHocTaskId]
+        );
+        if (dueRow.rows[0]?.due_date_time) {
+          dueDateTime = dueRow.rows[0].due_date_time;
+        }
+      }
+      const doneAtBaghdad = toBaghdadTime(doneAt);
+      if (dueDateTime) {
+        const dueBaghdad = toBaghdadTime(dueDateTime);
+        const deadline = dueBaghdad.clone().add(graceMinutes, 'minutes');
+        if (doneAtBaghdad.valueOf() <= deadline.valueOf()) {
+          effectiveResultStatus = 'completed';
+        } else {
+          effectiveResultStatus = 'completed_late';
+          delayMinutes = Math.min(120, Math.max(0, Math.ceil((doneAtBaghdad.valueOf() - deadline.valueOf()) / 60000)));
+        }
+      } else {
+        effectiveResultStatus = 'completed';
+      }
+    }
+
     const client = await pool.connect();
     
     try {
@@ -342,20 +387,22 @@ const executeTask = async (req, res) => {
       // للمهام الخاصة: finalOnBehalfOfUserId يبقى null
       
       const executionResult = await client.query(
-        `INSERT INTO task_executions (daily_task_id, ad_hoc_task_id, done_by_user_id, on_behalf_of_user_id, done_at, result_status, notes, duration_minutes, settlement_date, settlement_value, verification_status)
-         VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, $6, $7, $8, $9, $10)
+        `INSERT INTO task_executions (daily_task_id, ad_hoc_task_id, done_by_user_id, on_behalf_of_user_id, done_at, result_status, notes, duration_minutes, settlement_date, settlement_value, verification_status, delay_minutes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING *`,
         [
           dailyTaskId || null,
           adHocTaskId || null,
           req.user.id,
           finalOnBehalfOfUserId,
-          resultStatus,
+          doneAt,
+          effectiveResultStatus,
           notes || null,
           durationMinutes || null,
           settlementDateVal || null,
           settlementValueNum != null && !isNaN(settlementValueNum) ? settlementValueNum : null,
           verificationStatus,
+          delayMinutes,
         ]
       );
       
@@ -371,7 +418,7 @@ const executeTask = async (req, res) => {
            END,
            updated_at = CURRENT_TIMESTAMP
            WHERE id = $2`,
-          [resultStatus, dailyTaskId]
+          [effectiveResultStatus, dailyTaskId]
         );
       } else if (adHocTaskId) {
         await client.query(
@@ -384,7 +431,7 @@ const executeTask = async (req, res) => {
            END,
            updated_at = CURRENT_TIMESTAMP
            WHERE id = $2`,
-          [resultStatus, adHocTaskId]
+          [effectiveResultStatus, adHocTaskId]
         );
       }
       
@@ -401,7 +448,7 @@ const executeTask = async (req, res) => {
           userName,
           taskId: dailyTaskId || adHocTaskId,
           taskType: dailyTaskId ? 'daily' : 'ad-hoc',
-          resultStatus,
+          resultStatus: effectiveResultStatus,
         }, req.user.id);
       }
       
@@ -410,7 +457,7 @@ const executeTask = async (req, res) => {
         'execute_task',
         dailyTaskId ? 'daily_task' : 'ad_hoc_task',
         dailyTaskId || adHocTaskId,
-        { resultStatus },
+        { resultStatus: effectiveResultStatus, delayMinutes },
         req.ip,
         req.get('user-agent')
       );

@@ -40,7 +40,13 @@ import {
 type Period = 'day' | 'week' | 'month' | 'custom';
 
 function num(n: number | undefined | null): string {
-  return String(n ?? 0);
+  const v = Number(n ?? 0);
+  if (Number.isNaN(v)) return '0';
+  return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+
+function numIqd(n: number | undefined | null): string {
+  return `${num(n)} IQD`;
 }
 
 const CHART_COLORS = [
@@ -72,6 +78,7 @@ interface ReportV2 {
     late: number;
     coverage: number;
     avg_duration_minutes: number | null;
+    avg_delay_late_minutes: number | null;
     total_duration_minutes: number;
     attendance: {
       employees_present: number;
@@ -115,7 +122,9 @@ interface ReportV2 {
   employees: Array<{
     id: number;
     name: string;
+    avatar_url: string | null;
     attendance_days: number;
+    avg_attendance_time: string | null;
     executed_total: number;
     scheduled_executed: number;
     ad_hoc_executed: number;
@@ -123,6 +132,7 @@ interface ReportV2 {
     late: number;
     coverage: number;
     avg_duration_minutes: number | null;
+    avg_delay_late_minutes: number | null;
     total_duration_minutes: number;
   }>;
   coverage: Array<{
@@ -253,7 +263,24 @@ export function ReportsV2Print() {
   }, [autoPrint, data]);
 
   return (
-    <div className="min-h-screen bg-slate-100 print:bg-white" dir="rtl">
+    <div className="min-h-screen bg-slate-100 print:bg-white report-print-root" dir="rtl">
+      <style>{`
+        @media print {
+          @page { size: A4; margin: 6mm 2mm; }
+          .report-print-root { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .report-print-root .print-content-area { padding-left: 2mm !important; padding-right: 2mm !important; }
+          .report-print-root section { page-break-inside: avoid; }
+          .report-print-root table thead { display: table-header-group; }
+          .report-print-root table tbody tr { page-break-inside: avoid; }
+          .report-print-root .print-keep-together { page-break-inside: avoid; }
+          .report-print-root [class*="Card"] { page-break-inside: avoid; }
+          .report-print-root .recharts-wrapper,
+          .report-print-root .recharts-surface,
+          .report-print-root .recharts-wrapper svg { visibility: visible !important; opacity: 1 !important; }
+          .report-print-root .recharts-wrapper { min-height: 200px !important; height: 280px !important; }
+          .report-print-root .print-chart-box { min-height: 200px !important; height: 280px !important; overflow: visible !important; }
+        }
+      `}</style>
       <div className="no-print sticky top-0 z-40 border-b bg-white/80 backdrop-blur">
         <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -280,148 +307,129 @@ export function ReportsV2Print() {
       </div>
 
       <div className="mx-auto max-w-6xl px-4 py-6 print:px-0 print:py-0">
-        {/* Paper container */}
-        <div className="bg-white shadow-xl rounded-2xl overflow-hidden print:shadow-none print:rounded-none print:overflow-visible">
-          {/* Cover/Header */}
+        {/* Paper container — عند الطباعة: ظلال مخففة وتقسيم واضح */}
+        <div className="bg-white shadow-xl rounded-2xl overflow-hidden print:shadow-none print:rounded-none print:overflow-visible print:border print:border-slate-200">
+          {/* الصفحة الأولى — تصميم بألوان النظام */}
           <div
-            className="px-6 py-8 print:px-[15mm] print:py-8"
+            className="print-content-area print:py-6"
             style={{
-              background:
-                'linear-gradient(135deg, rgba(2,97,116,0.08) 0%, rgba(6,130,148,0.08) 100%)',
-              borderBottom: '2px solid rgba(6,130,148,0.25)',
+              background: 'linear-gradient(180deg, #026174 0%, #068294 28%, #EBF4F6 28%, #F6FAFB 100%)',
+              borderBottom: '3px solid #068294',
             }}
           >
-            <div className="flex items-start justify-between gap-6">
-              <div className="min-w-0">
-                <div className="flex items-center gap-3">
-                  <CompanyLogo size="lg" animated={false} showRing={false} />
-                  <div className="min-w-0">
-                    <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">
+            <div className="px-6 py-8">
+              <div className="flex items-start justify-between gap-6 flex-wrap">
+                <div className="flex items-center gap-4">
+                  <div className="rounded-2xl bg-white/95 p-2 shadow-md print:shadow-none ring-2 ring-white/80">
+                    <CompanyLogo size="lg" animated={false} showRing={false} />
+                  </div>
+                  <div>
+                    <h1 className="text-2xl md:text-3xl font-extrabold text-white drop-shadow-sm" style={{ color: '#fff' }}>
                       تقرير القسم (ورقي)
                     </h1>
-                    <p className="text-sm text-slate-600 mt-1">
-                      تقرير شامل حسب تاريخ التنفيذ — من {data?.dateFrom ?? '—'} إلى{' '}
-                      {data?.dateTo ?? '—'}
+                    <p className="text-sm mt-1 text-white/95">
+                      تقرير شامل حسب تاريخ التنفيذ — من {data?.dateFrom ?? '—'} إلى {data?.dateTo ?? '—'}
                     </p>
-                  </div>
-                </div>
-
-                <div className="mt-5 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                  <div className="rounded-xl border bg-white p-3">
-                    <div className="text-xs text-muted-foreground">الفترة</div>
-                    <div className="font-semibold flex items-center gap-2 mt-1">
-                      <Calendar className="h-4 w-4 text-[#026174]" />
-                      {formatPeriodLabel(period)}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border bg-white p-3">
-                    <div className="text-xs text-muted-foreground">تاريخ الإصدار</div>
-                    <div className="font-mono mt-1">{generatedAt}</div>
-                  </div>
-                  <div className="rounded-xl border bg-white p-3">
-                    <div className="text-xs text-muted-foreground">المنجزة</div>
-                    <div className="font-mono text-lg mt-1">
-                      {num(dept?.executed_total ?? 0)}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border bg-white p-3">
-                    <div className="text-xs text-muted-foreground">التسويات</div>
-                    <div className="font-mono text-lg mt-1">
-                      {num(data?.settlements?.total_settlements ?? 0)}
-                    </div>
                   </div>
                 </div>
               </div>
 
-              <div className="hidden md:block text-left">
-                <div className="rounded-2xl border bg-white px-4 py-3">
-                  <div className="text-xs text-muted-foreground">مختصر</div>
-                  <div className="mt-2 space-y-1 text-sm">
-                    <div className="flex justify-between gap-8">
-                      <span className="text-slate-600">في الوقت</span>
-                      <span className="font-mono">{num(dept?.on_time ?? 0)}</span>
+              <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { label: 'الفترة', value: formatPeriodLabel(period), icon: Calendar, color: '#026174' },
+                  { label: 'تاريخ الإصدار', value: generatedAt, icon: null, color: '#068294' },
+                  { label: 'المنجزة', value: num(dept?.executed_total ?? 0), icon: null, color: '#068294' },
+                  { label: 'التسويات', value: num(data?.settlements?.total_settlements ?? 0), icon: null, color: '#068294' },
+                ].map((item, i) => (
+                  <div
+                    key={i}
+                    className="rounded-xl bg-white border-l-4 p-3 shadow-sm print:shadow-none"
+                    style={{ borderLeftColor: item.color }}
+                  >
+                    <div className="text-xs font-medium text-slate-500">{item.label}</div>
+                    <div className="font-semibold text-slate-900 mt-1 flex items-center gap-2">
+                      {item.icon && <item.icon className="h-4 w-4 shrink-0" style={{ color: item.color }} />}
+                      <span className="font-mono">{item.value}</span>
                     </div>
-                    <div className="flex justify-between gap-8">
-                      <span className="text-slate-600">متأخرة</span>
-                      <span className="font-mono">{num(dept?.late ?? 0)}</span>
-                    </div>
-                    <div className="flex justify-between gap-8">
-                      <span className="text-slate-600">تغطية</span>
-                      <span className="font-mono">{num(dept?.coverage ?? 0)}</span>
-                    </div>
-                    <div className="flex justify-between gap-8">
-                      <span className="text-slate-600">الموظفون</span>
-                      <span className="font-mono">{num(employees.length)}</span>
-                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-5 rounded-2xl bg-white/95 p-4 shadow-sm print:shadow-none border border-slate-200/80 max-w-sm">
+                <div className="text-xs font-semibold text-[#026174] mb-2">مختصر</div>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">في الوقت</span>
+                    <span className="font-mono font-semibold text-[#026174]">{num(dept?.on_time ?? 0)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">متأخرة</span>
+                    <span className="font-mono font-semibold">{num(dept?.late ?? 0)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">تغطية</span>
+                    <span className="font-mono font-semibold">{num(dept?.coverage ?? 0)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">الموظفون</span>
+                    <span className="font-mono font-semibold">{num(employees.length)}</span>
                   </div>
                 </div>
               </div>
             </div>
 
             {isLoading && (
-              <div className="mt-6 text-sm text-muted-foreground">جاري تجهيز التقرير للطباعة…</div>
+              <div className="px-6 mt-4 text-sm text-slate-600">جاري تجهيز التقرير للطباعة…</div>
             )}
           </div>
 
           {/* Body */}
-          <div className="px-6 py-8 print:px-[15mm] print:py-8 space-y-8">
+          <div className="px-6 py-8 print-content-area print:py-6 space-y-8">
             {!data ? (
               <div className="rounded-2xl border bg-slate-50 p-8 text-center text-muted-foreground">
                 لا توجد بيانات لعرضها. تأكد من تحديد الفترة بشكل صحيح.
               </div>
             ) : (
               <>
-                {/* KPI summary */}
+                {/* KPI summary — عناوين موحدة + بطاقات KPI بحد ملون */}
                 <section className="print:break-inside-avoid">
-                  <div className="flex items-center gap-2 mb-3">
+                  <div className="flex items-center gap-2 mb-4 border-r-4 border-[#026174] pr-3">
                     <FileCheck className="h-5 w-5 text-[#026174]" />
-                    <h2 className="text-lg font-bold">ملخص سريع</h2>
+                    <h2 className="text-lg font-bold text-slate-800">ملخص سريع</h2>
                   </div>
-                  <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-                    <div className="rounded-xl border p-3">
-                      <div className="text-xs text-muted-foreground">مهام منجزة</div>
-                      <div className="font-mono text-lg">{num(dept?.executed_total ?? 0)}</div>
-                    </div>
-                    <div className="rounded-xl border p-3">
-                      <div className="text-xs text-muted-foreground">في الوقت</div>
-                      <div className="font-mono text-lg">{num(dept?.on_time ?? 0)}</div>
-                    </div>
-                    <div className="rounded-xl border p-3">
-                      <div className="text-xs text-muted-foreground">متأخرة</div>
-                      <div className="font-mono text-lg">{num(dept?.late ?? 0)}</div>
-                    </div>
-                    <div className="rounded-xl border p-3">
-                      <div className="text-xs text-muted-foreground">نسبة في الوقت</div>
-                      <div className="font-mono text-lg">{num(onTimePct)}%</div>
-                    </div>
-                    <div className="rounded-xl border p-3">
-                      <div className="text-xs text-muted-foreground">تغطية</div>
-                      <div className="font-mono text-lg">{num(dept?.coverage ?? 0)}</div>
-                    </div>
-                    <div className="rounded-xl border p-3">
-                      <div className="text-xs text-muted-foreground">متوسط المدة</div>
-                      <div className="font-mono text-lg">
-                        {dept?.avg_duration_minutes != null ? `${num(dept.avg_duration_minutes)} د` : '—'}
+                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+                    {[
+                      { label: 'مهام منجزة', value: num(dept?.executed_total ?? 0), color: '#026174' },
+                      { label: 'في الوقت', value: num(dept?.on_time ?? 0), color: '#068294' },
+                      { label: 'متأخرة', value: num(dept?.late ?? 0), color: '#068294' },
+                      { label: 'نسبة في الوقت', value: `${num(onTimePct)}%`, color: '#068294' },
+                      { label: 'تغطية', value: num(dept?.coverage ?? 0), color: '#068294' },
+                      { label: 'متوسط المدة', value: dept?.avg_duration_minutes != null ? `${num(dept.avg_duration_minutes)} د` : '—', color: '#068294' },
+                      { label: 'متوسط التأخير (للمتأخرة)', value: dept?.avg_delay_late_minutes != null ? `${num(dept.avg_delay_late_minutes)} د` : '—', color: '#068294' },
+                    ].map((kpi, i) => (
+                      <div key={i} className="rounded-lg border border-slate-200 border-l-4 p-3 bg-white" style={{ borderLeftColor: kpi.color }}>
+                        <div className="text-xs font-medium text-slate-500">{kpi.label}</div>
+                        <div className="font-mono text-lg font-semibold text-slate-900 mt-1">{kpi.value}</div>
                       </div>
-                    </div>
+                    ))}
                   </div>
                 </section>
 
                 <div className="page-break" />
 
-                {/* Settlements */}
+                {/* Settlements — عنوان قسم موحد */}
                 <section className="print:break-inside-avoid">
-                  <Card className="shadow-md print:shadow-none">
-                    <CardHeader className="bg-slate-50/80 border-b">
-                      <CardTitle className="flex items-center gap-2 text-lg">
+                  <Card className="shadow-md print:shadow-none border border-slate-200">
+                    <CardHeader className="border-b border-slate-200 py-4">
+                      <CardTitle className="flex items-center gap-2 text-lg border-r-4 border-[#026174] pr-3">
                         <Banknote className="h-5 w-5 text-[#026174]" />
-                        التسويات الحكومية — حسب المصرف
+                        <span className="text-slate-800">التسويات الحكومية — حسب المصرف</span>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-6 space-y-5">
                       {settlementsByBank.length > 0 ? (
                         <>
-                          <div className="h-[320px] print:h-[280px]">
+                          <div className="h-[320px] print:h-[280px] print-chart-box">
                             <ResponsiveContainer width="100%" height="100%">
                               <BarChart
                                 data={settlementsByBank}
@@ -460,19 +468,19 @@ export function ReportsV2Print() {
                             </ResponsiveContainer>
                           </div>
 
-                          <div className="rounded-xl border overflow-hidden print:overflow-visible">
+                          <div className="rounded-xl border border-slate-200 overflow-hidden print:overflow-visible">
                             <Table>
                               <TableHeader>
-                                <TableRow className="bg-slate-100 hover:bg-slate-100">
-                                  <TableHead>المصرف</TableHead>
-                                  <TableHead className="text-left font-mono">عدد التسويات</TableHead>
-                                  <TableHead className="text-left font-mono">عدد الحركات</TableHead>
-                                  <TableHead className="text-left font-mono">STTLE</TableHead>
+                                <TableRow className="bg-[#026174] hover:bg-[#026174]">
+                                  <TableHead className="text-white font-semibold">المصرف</TableHead>
+                                  <TableHead className="text-left font-mono text-white font-semibold">عدد التسويات</TableHead>
+                                  <TableHead className="text-left font-mono text-white font-semibold">عدد الحركات</TableHead>
+                                  <TableHead className="text-left font-mono text-white font-semibold">STTLE</TableHead>
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
                                 {settlementsByBank.map((row, i) => (
-                                  <TableRow key={i} className="hover:bg-slate-50">
+                                  <TableRow key={i} className={i % 2 === 1 ? 'bg-slate-50/80' : 'bg-white'}>
                                     <TableCell className="font-medium">{row.bank_name}</TableCell>
                                     <TableCell className="font-mono text-left">
                                       {num(row.settlement_count)}
@@ -481,7 +489,7 @@ export function ReportsV2Print() {
                                       {num(row.total_movements)}
                                     </TableCell>
                                     <TableCell className="font-mono text-left">
-                                      {num(Math.round(row.total_sttle))}
+                                      {numIqd(Math.round(row.total_sttle))}
                                     </TableCell>
                                   </TableRow>
                                 ))}
@@ -502,17 +510,17 @@ export function ReportsV2Print() {
 
                 {/* Tasks by category */}
                 <section className="print:break-inside-avoid">
-                  <Card className="shadow-md print:shadow-none">
-                    <CardHeader className="bg-slate-50/80 border-b">
-                      <CardTitle className="flex items-center gap-2 text-lg">
+                  <Card className="shadow-md print:shadow-none border border-slate-200">
+                    <CardHeader className="border-b border-slate-200 py-4">
+                      <CardTitle className="flex items-center gap-2 text-lg border-r-4 border-[#026174] pr-3">
                         <LayoutList className="h-5 w-5 text-[#026174]" />
-                        المهام — حسب الفئة
+                        <span className="text-slate-800">المهام — حسب الفئة</span>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-6 space-y-5">
                       {tasksByCategory.length > 0 ? (
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-                          <div className="h-[320px] print:h-[280px]">
+                          <div className="h-[320px] print:h-[280px] print-chart-box">
                             <ResponsiveContainer width="100%" height="100%">
                               <PieChart>
                                 <Pie
@@ -550,19 +558,19 @@ export function ReportsV2Print() {
                             </ResponsiveContainer>
                           </div>
 
-                          <div className="rounded-xl border overflow-hidden print:overflow-visible">
+                          <div className="rounded-xl border border-slate-200 overflow-hidden print:overflow-visible">
                             <Table>
                               <TableHeader>
-                                <TableRow className="bg-slate-100 hover:bg-slate-100">
-                                  <TableHead>الفئة</TableHead>
-                                  <TableHead className="text-left font-mono">المنجزة</TableHead>
-                                  <TableHead className="text-left font-mono">في الوقت</TableHead>
-                                  <TableHead className="text-left font-mono">متأخرة</TableHead>
+                                <TableRow className="bg-[#026174] hover:bg-[#026174]">
+                                  <TableHead className="text-white font-semibold">الفئة</TableHead>
+                                  <TableHead className="text-left font-mono text-white font-semibold">المنجزة</TableHead>
+                                  <TableHead className="text-left font-mono text-white font-semibold">في الوقت</TableHead>
+                                  <TableHead className="text-left font-mono text-white font-semibold">متأخرة</TableHead>
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
-                                {tasksByCategory.map((r) => (
-                                  <TableRow key={r.category_id} className="hover:bg-slate-50">
+                                {tasksByCategory.map((r, idx) => (
+                                  <TableRow key={r.category_id} className={idx % 2 === 1 ? 'bg-slate-50/80' : 'bg-white'}>
                                     <TableCell className="font-medium">{r.category_name}</TableCell>
                                     <TableCell className="font-mono text-left">{num(r.executed_total)}</TableCell>
                                     <TableCell className="font-mono text-left">{num(r.on_time)}</TableCell>
@@ -584,29 +592,29 @@ export function ReportsV2Print() {
 
                 {/* Template/category breakdown */}
                 <section className="print:break-inside-avoid">
-                  <Card className="shadow-md print:shadow-none">
-                    <CardHeader className="bg-slate-50/80 border-b">
-                      <CardTitle className="flex items-center gap-2 text-lg">
+                  <Card className="shadow-md print:shadow-none border border-slate-200">
+                    <CardHeader className="border-b border-slate-200 py-4">
+                      <CardTitle className="flex items-center gap-2 text-lg border-r-4 border-[#026174] pr-3">
                         <LayoutList className="h-5 w-5 text-[#026174]" />
-                        المهام حسب القالب والفئة
+                        <span className="text-slate-800">المهام حسب القالب والفئة</span>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-6">
                       {templateCategory.length > 0 ? (
-                        <div className="rounded-xl border overflow-hidden print:overflow-visible">
+                        <div className="rounded-xl border border-slate-200 overflow-hidden print:overflow-visible">
                           <Table>
                             <TableHeader>
-                              <TableRow className="bg-slate-100 hover:bg-slate-100">
-                                <TableHead>القالب</TableHead>
-                                <TableHead>الفئة</TableHead>
-                                <TableHead className="text-left font-mono">المنجزة</TableHead>
-                                <TableHead className="text-left font-mono">في الوقت</TableHead>
-                                <TableHead className="text-left font-mono">متأخرة</TableHead>
+                              <TableRow className="bg-[#026174] hover:bg-[#026174]">
+                                <TableHead className="text-white font-semibold">القالب</TableHead>
+                                <TableHead className="text-white font-semibold">الفئة</TableHead>
+                                <TableHead className="text-left font-mono text-white font-semibold">المنجزة</TableHead>
+                                <TableHead className="text-left font-mono text-white font-semibold">في الوقت</TableHead>
+                                <TableHead className="text-left font-mono text-white font-semibold">متأخرة</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
                               {templateCategory.map((r, i) => (
-                                <TableRow key={`${r.template_id}-${r.category_id}-${i}`} className="hover:bg-slate-50">
+                                <TableRow key={`${r.template_id}-${r.category_id}-${i}`} className={i % 2 === 1 ? 'bg-slate-50/80' : 'bg-white'}>
                                   <TableCell className="font-medium">{r.template_title || '—'}</TableCell>
                                   <TableCell>{r.category_name || '—'}</TableCell>
                                   <TableCell className="font-mono text-left">{num(r.executed_total)}</TableCell>
@@ -628,50 +636,84 @@ export function ReportsV2Print() {
 
                 <div className="page-break" />
 
-                {/* Employees */}
+                {/* Employees — بطاقات مع صورة ومتوسط وقت الحضور */}
                 <section className="print:break-inside-avoid">
-                  <Card className="shadow-md print:shadow-none">
-                    <CardHeader className="bg-slate-50/80 border-b">
-                      <CardTitle className="flex items-center gap-2 text-lg">
+                  <Card className="shadow-lg print:shadow-none border border-slate-200">
+                    <CardHeader className="border-b border-slate-200 py-4 bg-slate-50/50">
+                      <CardTitle className="flex items-center gap-2 text-lg border-r-4 border-[#026174] pr-3">
                         <Users className="h-5 w-5 text-[#026174]" />
-                        الموظفون — ملخص الأداء
+                        <span className="text-slate-800">الموظفون — ملخص الأداء</span>
                       </CardTitle>
                     </CardHeader>
-                    <CardContent className="pt-6 space-y-4">
+                    <CardContent className="pt-6">
                       {employees.length > 0 ? (
-                        <div className="rounded-xl border overflow-hidden print:overflow-visible">
-                          <Table>
-                            <TableHeader>
-                              <TableRow className="bg-slate-100 hover:bg-slate-100">
-                                <TableHead>الموظف</TableHead>
-                                <TableHead className="text-left font-mono">حضور</TableHead>
-                                <TableHead className="text-left font-mono">منجزة</TableHead>
-                                <TableHead className="text-left font-mono">مجدولة/إضافية</TableHead>
-                                <TableHead className="text-left font-mono">في الوقت</TableHead>
-                                <TableHead className="text-left font-mono">متأخرة</TableHead>
-                                <TableHead className="text-left font-mono">تغطية</TableHead>
-                                <TableHead className="text-left font-mono">متوسط المدة</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {employees.map((e) => (
-                                <TableRow key={e.id} className="hover:bg-slate-50">
-                                  <TableCell className="font-medium">{e.name}</TableCell>
-                                  <TableCell className="font-mono text-left">{num(e.attendance_days)}</TableCell>
-                                  <TableCell className="font-mono text-left">{num(e.executed_total)}</TableCell>
-                                  <TableCell className="font-mono text-left">
-                                    {num(e.scheduled_executed)} / {num(e.ad_hoc_executed)}
-                                  </TableCell>
-                                  <TableCell className="font-mono text-left">{num(e.on_time)}</TableCell>
-                                  <TableCell className="font-mono text-left">{num(e.late)}</TableCell>
-                                  <TableCell className="font-mono text-left">{num(e.coverage)}</TableCell>
-                                  <TableCell className="font-mono text-left">
-                                    {e.avg_duration_minutes != null ? `${num(e.avg_duration_minutes)} د` : '—'}
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 print:gap-3">
+                          {employees.map((e) => {
+                            const avatarSrc = e.avatar_url
+                              ? (e.avatar_url.startsWith('http') ? e.avatar_url : `${window.location.origin}${e.avatar_url}`)
+                              : null;
+                            return (
+                              <div
+                                key={e.id}
+                                className="rounded-xl border border-slate-200 border-r-4 bg-white p-4 shadow-sm print:shadow-none print:break-inside-avoid"
+                                style={{ borderRightColor: '#026174' }}
+                              >
+                                <div className="flex items-center gap-3 mb-3">
+                                  <div className="h-14 w-14 rounded-full overflow-hidden border-2 border-[#068294]/30 bg-slate-100 flex-shrink-0">
+                                    {avatarSrc ? (
+                                      <img src={avatarSrc} alt="" className="h-full w-full object-cover" />
+                                    ) : (
+                                      <div className="h-full w-full flex items-center justify-center text-xl font-bold text-[#026174] bg-slate-200">
+                                        {e.name?.trim().charAt(0)?.toUpperCase() || '?'}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-slate-900 truncate">{e.name}</div>
+                                    <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5">
+                                      <span>أيام حضور: {num(e.attendance_days)}</span>
+                                      {e.avg_attendance_time && (
+                                        <>
+                                          <span>•</span>
+                                          <span>متوسط وقت الحضور: {e.avg_attendance_time}</span>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2 text-sm">
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">منجزة</span>
+                                    <span className="font-mono font-medium">{num(e.executed_total)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">في الوقت</span>
+                                    <span className="font-mono font-medium text-emerald-600">{num(e.on_time)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">متأخرة</span>
+                                    <span className="font-mono font-medium text-amber-600">{num(e.late)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-muted-foreground">تغطية</span>
+                                    <span className="font-mono font-medium">{num(e.coverage)}</span>
+                                  </div>
+                                  <div className="flex justify-between col-span-2">
+                                    <span className="text-muted-foreground">متوسط المدة</span>
+                                    <span className="font-mono">
+                                      {e.avg_duration_minutes != null ? `${num(e.avg_duration_minutes)} د` : '—'}
+                                    </span>
+                                  </div>
+                                  {e.avg_delay_late_minutes != null && e.avg_delay_late_minutes > 0 && (
+                                    <div className="flex justify-between col-span-2">
+                                      <span className="text-muted-foreground">متوسط التأخير (للمتأخرة)</span>
+                                      <span className="font-mono text-amber-600">{num(e.avg_delay_late_minutes)} د</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       ) : (
                         <div className="text-muted-foreground py-6 text-center">لا يوجد موظفون.</div>
@@ -682,27 +724,27 @@ export function ReportsV2Print() {
 
                 {/* Coverage */}
                 <section className="print:break-inside-avoid">
-                  <Card className="shadow-md print:shadow-none">
-                    <CardHeader className="bg-slate-50/80 border-b">
-                      <CardTitle className="flex items-center gap-2 text-lg">
+                  <Card className="shadow-md print:shadow-none border border-slate-200">
+                    <CardHeader className="border-b border-slate-200 py-4">
+                      <CardTitle className="flex items-center gap-2 text-lg border-r-4 border-[#026174] pr-3">
                         <Users className="h-5 w-5 text-[#026174]" />
-                        التغطية — من قام بمهام الآخرين
+                        <span className="text-slate-800">التغطية — من قام بمهام الآخرين</span>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="pt-6">
                       {coverageRows.length > 0 ? (
-                        <div className="rounded-xl border overflow-hidden print:overflow-visible">
+                        <div className="rounded-xl border border-slate-200 overflow-hidden print:overflow-visible">
                           <Table>
                             <TableHeader>
-                              <TableRow className="bg-slate-100 hover:bg-slate-100">
-                                <TableHead>المنفذ</TableHead>
-                                <TableHead>المكلف</TableHead>
-                                <TableHead className="text-left font-mono">العدد</TableHead>
+                              <TableRow className="bg-[#026174] hover:bg-[#026174]">
+                                <TableHead className="text-white font-semibold">المنفذ</TableHead>
+                                <TableHead className="text-white font-semibold">المكلف</TableHead>
+                                <TableHead className="text-left font-mono text-white font-semibold">العدد</TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
                               {coverageRows.map((r, i) => (
-                                <TableRow key={i} className="hover:bg-slate-50">
+                                <TableRow key={i} className={i % 2 === 1 ? 'bg-slate-50/80' : 'bg-white'}>
                                   <TableCell className="font-medium">
                                     {idToName.get(r.done_by_user_id) || `#${r.done_by_user_id}`}
                                   </TableCell>
@@ -724,111 +766,47 @@ export function ReportsV2Print() {
 
                 <div className="page-break" />
 
-                {/* Tasks list (limited) */}
-                <section className="print:break-inside-avoid">
-                  <Card className="shadow-md print:shadow-none">
-                    <CardHeader className="bg-slate-50/80 border-b">
-                      <CardTitle className="flex items-center gap-2 text-lg">
-                        <LayoutList className="h-5 w-5 text-[#026174]" />
-                        تفاصيل المهام (مختصر)
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="pt-6 space-y-3">
-                      <div className="text-sm text-muted-foreground">
-                        تم عرض {num(data.tasks.rows.length)} سجل من أصل {num(data.tasks.total)}. (للقائمة الكاملة استخدم تصدير CSV)
-                      </div>
-                      {data.tasks.rows.length > 0 ? (
-                        <div className="rounded-xl border overflow-hidden print:overflow-visible">
-                          <Table>
-                            <TableHeader>
-                              <TableRow className="bg-slate-100 hover:bg-slate-100">
-                                <TableHead>التاريخ</TableHead>
-                                <TableHead>النوع</TableHead>
-                                <TableHead>الفئة</TableHead>
-                                <TableHead>القالب</TableHead>
-                                <TableHead className="text-left font-mono">الحالة</TableHead>
-                                <TableHead className="text-left font-mono">المدة</TableHead>
-                                <TableHead className="text-left font-mono">تغطية</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {data.tasks.rows.map((r) => {
-                                const isCoverage =
-                                  r.assigned_to_user_id != null &&
-                                  r.assigned_to_user_id !== r.user_id;
-                                return (
-                                  <TableRow key={r.execution_id} className="hover:bg-slate-50">
-                                    <TableCell className="font-mono">{r.done_at ?? r.done_date}</TableCell>
-                                    <TableCell>
-                                      {r.task_type === 'scheduled' ? 'مجدولة' : 'إضافية'}
-                                    </TableCell>
-                                    <TableCell>{r.category_name || 'بدون فئة'}</TableCell>
-                                    <TableCell className="max-w-[240px] truncate" title={r.template_title || ''}>
-                                      {r.template_title || 'بدون قالب'}
-                                    </TableCell>
-                                    <TableCell className="font-mono text-left">{r.result_status}</TableCell>
-                                    <TableCell className="font-mono text-left">
-                                      {r.duration_minutes != null ? `${num(r.duration_minutes)} د` : '—'}
-                                    </TableCell>
-                                    <TableCell className="font-mono text-left">{isCoverage ? 'نعم' : '—'}</TableCell>
-                                  </TableRow>
-                                );
-                              })}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      ) : (
-                        <div className="text-muted-foreground py-6 text-center">لا توجد مهام ضمن الفترة.</div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </section>
-
-                <div className="page-break" />
-
                 {/* Systems */}
                 <section className="print:break-inside-avoid">
-                  <div className="flex items-center gap-2 mb-3">
+                  <div className="flex items-center gap-2 mb-4 border-r-4 border-[#026174] pr-3">
                     <Building2 className="h-5 w-5 text-[#026174]" />
-                    <h2 className="text-lg font-bold">أنظمة/سجلات</h2>
+                    <h2 className="text-lg font-bold text-slate-800">أنظمة/سجلات</h2>
                   </div>
 
                   <div className="grid grid-cols-1 gap-6">
-                    <Card className="shadow-md print:shadow-none">
-                      <CardHeader className="bg-slate-50/80 border-b">
-                        <CardTitle className="text-lg">CT Matching</CardTitle>
+                    <Card className="shadow-md print:shadow-none border border-slate-200">
+                      <CardHeader className="border-b border-slate-200 py-4">
+                        <CardTitle className="text-lg border-r-4 border-[#068294] pr-3 text-slate-800">CT Matching</CardTitle>
                       </CardHeader>
                       <CardContent className="pt-6 space-y-4">
                         <div className="grid grid-cols-3 gap-3">
-                          <div className="rounded-xl border p-3">
-                            <div className="text-xs text-muted-foreground">الإجمالي</div>
-                            <div className="font-mono text-lg">{num(data.ctMatching.total)}</div>
-                          </div>
-                          <div className="rounded-xl border p-3">
-                            <div className="text-xs text-muted-foreground">مطابقة</div>
-                            <div className="font-mono text-lg">{num(data.ctMatching.matched)}</div>
-                          </div>
-                          <div className="rounded-xl border p-3">
-                            <div className="text-xs text-muted-foreground">غير مطابقة</div>
-                            <div className="font-mono text-lg">{num(data.ctMatching.notMatched)}</div>
-                          </div>
+                          {[
+                            { label: 'الإجمالي', value: num(data.ctMatching.total) },
+                            { label: 'مطابقة', value: num(data.ctMatching.matched) },
+                            { label: 'غير مطابقة', value: num(data.ctMatching.notMatched) },
+                          ].map((k, i) => (
+                            <div key={i} className="rounded-lg border border-slate-200 border-l-4 p-3 bg-white" style={{ borderLeftColor: '#068294' }}>
+                              <div className="text-xs font-medium text-slate-500">{k.label}</div>
+                              <div className="font-mono text-lg font-semibold text-slate-900 mt-1">{k.value}</div>
+                            </div>
+                          ))}
                         </div>
 
                         {data.ctMatching.records.length > 0 ? (
-                          <div className="rounded-xl border overflow-hidden print:overflow-visible">
+                          <div className="rounded-xl border border-slate-200 overflow-hidden print:overflow-visible">
                             <Table>
                               <TableHeader>
-                                <TableRow className="bg-slate-100 hover:bg-slate-100">
-                                  <TableHead>الفترة</TableHead>
-                                  <TableHead className="text-left font-mono">CT</TableHead>
-                                  <TableHead className="text-left font-mono">ACQ</TableHead>
-                                  <TableHead className="text-left font-mono">Fees</TableHead>
-                                  <TableHead>الحالة</TableHead>
+                                <TableRow className="bg-[#068294] hover:bg-[#068294]">
+                                  <TableHead className="text-white font-semibold">الفترة</TableHead>
+                                  <TableHead className="text-left font-mono text-white font-semibold">CT</TableHead>
+                                  <TableHead className="text-left font-mono text-white font-semibold">ACQ</TableHead>
+                                  <TableHead className="text-left font-mono text-white font-semibold">Fees</TableHead>
+                                  <TableHead className="text-white font-semibold">الحالة</TableHead>
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
-                                {data.ctMatching.records.slice(0, 25).map((r) => (
-                                  <TableRow key={r.id} className="hover:bg-slate-50">
+                                {data.ctMatching.records.slice(0, 25).map((r, i) => (
+                                  <TableRow key={r.id} className={i % 2 === 1 ? 'bg-slate-50/80' : 'bg-white'}>
                                     <TableCell className="font-mono">
                                       {r.sttl_date_from} → {r.sttl_date_to}
                                     </TableCell>
@@ -852,39 +830,39 @@ export function ReportsV2Print() {
                       </CardContent>
                     </Card>
 
-                    <Card className="shadow-md print:shadow-none">
-                      <CardHeader className="bg-slate-50/80 border-b">
-                        <CardTitle className="text-lg">صرف مستحقات التجار</CardTitle>
+                    <Card className="shadow-md print:shadow-none border border-slate-200">
+                      <CardHeader className="border-b border-slate-200 py-4">
+                        <CardTitle className="text-lg border-r-4 border-[#068294] pr-3 text-slate-800">صرف مستحقات التجار</CardTitle>
                       </CardHeader>
                       <CardContent className="pt-6 space-y-4">
                         <div className="grid grid-cols-2 gap-3">
-                          <div className="rounded-xl border p-3">
-                            <div className="text-xs text-muted-foreground">عدد عمليات الصرف</div>
-                            <div className="font-mono text-lg">{num(data.merchantDisbursements.count)}</div>
+                          <div className="rounded-lg border border-slate-200 border-l-4 p-3 bg-white" style={{ borderLeftColor: '#068294' }}>
+                            <div className="text-xs font-medium text-slate-500">عدد عمليات الصرف</div>
+                            <div className="font-mono text-lg font-semibold text-slate-900 mt-1">{num(data.merchantDisbursements.count)}</div>
                           </div>
-                          <div className="rounded-xl border p-3">
-                            <div className="text-xs text-muted-foreground">الإجمالي</div>
-                            <div className="font-mono text-lg">{num(Math.round(data.merchantDisbursements.total_amount))}</div>
+                          <div className="rounded-lg border border-slate-200 border-l-4 p-3 bg-white" style={{ borderLeftColor: '#068294' }}>
+                            <div className="text-xs font-medium text-slate-500">الإجمالي</div>
+                            <div className="font-mono text-lg font-semibold text-slate-900 mt-1">{numIqd(Math.round(data.merchantDisbursements.total_amount))}</div>
                           </div>
                         </div>
 
                         {data.merchantDisbursements.rows.length > 0 ? (
-                          <div className="rounded-xl border overflow-hidden print:overflow-visible">
+                          <div className="rounded-xl border border-slate-200 overflow-hidden print:overflow-visible">
                             <Table>
                               <TableHeader>
-                                <TableRow className="bg-slate-100 hover:bg-slate-100">
-                                  <TableHead>التاريخ</TableHead>
-                                  <TableHead>التاجر</TableHead>
-                                  <TableHead className="text-left font-mono">المبلغ</TableHead>
-                                  <TableHead>الحالة</TableHead>
+                                <TableRow className="bg-[#068294] hover:bg-[#068294]">
+                                  <TableHead className="text-white font-semibold">التاريخ</TableHead>
+                                  <TableHead className="text-white font-semibold">التاجر</TableHead>
+                                  <TableHead className="text-left font-mono text-white font-semibold">المبلغ</TableHead>
+                                  <TableHead className="text-white font-semibold">الحالة</TableHead>
                                 </TableRow>
                               </TableHeader>
                               <TableBody>
-                                {data.merchantDisbursements.rows.slice(0, 30).map((r) => (
-                                  <TableRow key={r.id} className="hover:bg-slate-50">
+                                {data.merchantDisbursements.rows.slice(0, 30).map((r, i) => (
+                                  <TableRow key={r.id} className={i % 2 === 1 ? 'bg-slate-50/80' : 'bg-white'}>
                                     <TableCell className="font-mono">{r.transfer_date}</TableCell>
                                     <TableCell className="font-mono">{r.merchant_id}</TableCell>
-                                    <TableCell className="font-mono text-left">{num(Math.round(r.amount))}</TableCell>
+                                    <TableCell className="font-mono text-left">{numIqd(Math.round(r.amount))}</TableCell>
                                     <TableCell>{r.status}</TableCell>
                                   </TableRow>
                                 ))}
@@ -902,47 +880,6 @@ export function ReportsV2Print() {
                       </CardContent>
                     </Card>
 
-                    <Card className="shadow-md print:shadow-none">
-                      <CardHeader className="bg-slate-50/80 border-b">
-                        <CardTitle className="text-lg">سجل التدقيق (الأحدث)</CardTitle>
-                      </CardHeader>
-                      <CardContent className="pt-6">
-                        {data.audit.length > 0 ? (
-                          <div className="rounded-xl border overflow-hidden print:overflow-visible">
-                            <Table>
-                              <TableHeader>
-                                <TableRow className="bg-slate-100 hover:bg-slate-100">
-                                  <TableHead>الوقت</TableHead>
-                                  <TableHead className="text-left font-mono">User ID</TableHead>
-                                  <TableHead>الإجراء</TableHead>
-                                  <TableHead>الكيان</TableHead>
-                                </TableRow>
-                              </TableHeader>
-                              <TableBody>
-                                {data.audit.slice(0, 35).map((r) => (
-                                  <TableRow key={r.id} className="hover:bg-slate-50">
-                                    <TableCell className="font-mono">{r.created_at || '—'}</TableCell>
-                                    <TableCell className="font-mono text-left">{r.user_id ?? '—'}</TableCell>
-                                    <TableCell className="font-mono">{r.action}</TableCell>
-                                    <TableCell className="font-mono">
-                                      {r.entity_type || '—'}
-                                      {r.entity_id != null ? `#${r.entity_id}` : ''}
-                                    </TableCell>
-                                  </TableRow>
-                                ))}
-                              </TableBody>
-                            </Table>
-                          </div>
-                        ) : (
-                          <div className="text-muted-foreground py-6 text-center">لا توجد أحداث تدقيق ضمن الفترة.</div>
-                        )}
-                        {data.audit.length > 35 && (
-                          <div className="text-xs text-muted-foreground mt-3">
-                            ملاحظة: تم عرض أول 35 سجل فقط للطباعة.
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
                   </div>
                 </section>
               </>
