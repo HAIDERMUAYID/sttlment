@@ -60,6 +60,7 @@ interface ByDirectorateGovernorate {
   governorate: string;
   directorate_name: string;
   movement_count: number;
+  device_count?: number;
   sum_amount: number;
   sum_fees: number;
   sum_acq: number;
@@ -213,9 +214,10 @@ function buildReportPrintHtml(
   </div>
 </section>`;
 
-  const byDayRows = byDaySorted.map((row, i) => {
+  const byDayForTable = [...byDaySorted].sort((a, b) => (Number(b.movement_count) || 0) - (Number(a.movement_count) || 0));
+  const byDayRows = byDayForTable.map((row, i) => {
     const acqVal = Number(row.sum_acq) || 0;
-    const pct = totalAcq ? ((acqVal / totalAcq) * 100).toFixed(1) : '0';
+    const pct = totalAcq ? ((acqVal / totalAcq) * 100).toFixed(3) : '0.000';
     return `
     <tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};">
       <td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${esc(fmtDate(row.sttl_date))}</td>
@@ -235,10 +237,10 @@ function buildReportPrintHtml(
   </table>
 </section>`;
 
-  const byBankSorted = [...(data.by_bank || [])].sort((a, b) => (a.bank_name || '').localeCompare(b.bank_name || '', 'ar'));
+  const byBankSorted = [...(data.by_bank || [])].sort((a, b) => (Number(b.movement_count) || 0) - (Number(a.movement_count) || 0));
   const byBankRows = byBankSorted.map((row, i) => {
     const acqVal = Number(row.sum_acq) || 0;
-    const pct = totalAcq ? ((acqVal / totalAcq) * 100).toFixed(1) : '0';
+    const pct = totalAcq ? ((acqVal / totalAcq) * 100).toFixed(3) : '0.000';
     return `
     <tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};"><td style="padding:10px;border:1px solid #e2e8f0;">${esc(row.bank_name)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${row.movement_count.toLocaleString('en-US')}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${fmtNum(row.sum_amount)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${fmtNum(row.sum_fees)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;font-weight:600;color:#0f766e;" dir="ltr">${fmtNum(row.sum_acq)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;font-weight:600;color:#475569;" dir="ltr">${pct}%</td></tr>`;
   }).join('');
@@ -252,16 +254,19 @@ function buildReportPrintHtml(
 </section>`;
 
   const dirGov = data.by_directorate_governorate && data.by_directorate_governorate.length > 0;
-  const dirGovRows = dirGov ? (data.by_directorate_governorate || []).map((row, i) => {
+  const dirGovSorted = dirGov
+    ? [...(data.by_directorate_governorate || [])].sort((a, b) => (Number(b.movement_count) || 0) - (Number(a.movement_count) || 0))
+    : [];
+  const dirGovRows = dirGov ? dirGovSorted.map((row, i) => {
     const acqVal = Number(row.sum_acq) || 0;
-    const pct = totalAcq ? ((acqVal / totalAcq) * 100).toFixed(1) : '0';
-    return `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};"><td style="padding:10px;border:1px solid #e2e8f0;">${esc(row.governorate)}</td><td style="padding:10px;border:1px solid #e2e8f0;">${esc(row.directorate_name)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${row.movement_count.toLocaleString('en-US')}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${fmtNum(row.sum_amount)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${fmtNum(row.sum_acq)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${pct}%</td></tr>`;
+    const pct = totalAcq ? ((acqVal / totalAcq) * 100).toFixed(3) : '0.000';
+    return `<tr style="background:${i % 2 === 0 ? '#fff' : '#f8fafc'};"><td style="padding:10px;border:1px solid #e2e8f0;">${esc(row.governorate)}</td><td style="padding:10px;border:1px solid #e2e8f0;">${esc(row.directorate_name)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${row.movement_count.toLocaleString('en-US')}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${(Number(row.device_count) || 0).toLocaleString('en-US')}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${fmtNum(row.sum_amount)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${fmtNum(row.sum_acq)}</td><td style="padding:10px;text-align:right;border:1px solid #e2e8f0;" dir="ltr">${pct}%</td></tr>`;
   }).join('') : '';
   const dirGovTable = dirGov ? `
 <section class="mb-10">
   <h2 style="font-size:1rem;font-weight:700;color:#0f172a;margin:0 0 12px 0;padding-bottom:8px;border-bottom:2px solid #026174;text-align:center;">حسب المديرية والمحافظة</h2>
   <table style="width:100%;border-collapse:collapse;font-size:0.8rem;" dir="rtl">
-    <thead><tr class="table-header-dark" style="background:linear-gradient(135deg,#026174 0%,#068294 100%);color:#fff;"><th style="padding:10px;text-align:right;">المحافظة</th><th style="padding:10px;text-align:right;">المديرية</th><th style="padding:10px;text-align:right;">عدد الحركات</th><th style="padding:10px;text-align:right;">إجمالي المبلغ</th><th style="padding:10px;text-align:right;">عمولة التحصيل</th><th style="padding:10px;text-align:right;">نسبة %</th></tr></thead>
+    <thead><tr class="table-header-dark" style="background:linear-gradient(135deg,#026174 0%,#068294 100%);color:#fff;"><th style="padding:10px;text-align:right;">المحافظة</th><th style="padding:10px;text-align:right;">المديرية</th><th style="padding:10px;text-align:right;">عدد الحركات</th><th style="padding:10px;text-align:right;">عدد الأجهزة</th><th style="padding:10px;text-align:right;">إجمالي المبلغ</th><th style="padding:10px;text-align:right;">عمولة التحصيل</th><th style="padding:10px;text-align:right;">نسبة %</th></tr></thead>
     <tbody>${dirGovRows}</tbody>
   </table>
 </section>` : '';
@@ -482,6 +487,14 @@ export function CtMatching() {
       table.print-cols-7 th:nth-child(5), table.print-cols-7 td:nth-child(5) { width: 14.29%; }
       table.print-cols-7 th:nth-child(6), table.print-cols-7 td:nth-child(6) { width: 14.29%; }
       table.print-cols-7 th:nth-child(7), table.print-cols-7 td:nth-child(7) { width: 14.26%; }
+      table.print-cols-8 th:nth-child(1), table.print-cols-8 td:nth-child(1) { width: 12.5%; }
+      table.print-cols-8 th:nth-child(2), table.print-cols-8 td:nth-child(2) { width: 12.5%; }
+      table.print-cols-8 th:nth-child(3), table.print-cols-8 td:nth-child(3) { width: 12.5%; }
+      table.print-cols-8 th:nth-child(4), table.print-cols-8 td:nth-child(4) { width: 12.5%; }
+      table.print-cols-8 th:nth-child(5), table.print-cols-8 td:nth-child(5) { width: 12.5%; }
+      table.print-cols-8 th:nth-child(6), table.print-cols-8 td:nth-child(6) { width: 12.5%; }
+      table.print-cols-8 th:nth-child(7), table.print-cols-8 td:nth-child(7) { width: 12.5%; }
+      table.print-cols-8 th:nth-child(8), table.print-cols-8 td:nth-child(8) { width: 12.5%; }
       thead { display: table-header-group; }
       thead tr, .table-header-dark { background: linear-gradient(135deg, #026174 0%, #068294 100%) !important; color: #fff !important; }
       thead th { font-weight: 700; color: #ffffff !important; background: linear-gradient(135deg, #026174 0%, #068294 100%) !important; border: 1px solid rgba(255,255,255,0.2); font-size: 0.85rem; }
@@ -1136,7 +1149,7 @@ export function CtMatching() {
                           </div>
                         </section>
 
-                        {/* تفصيل حسب المصارف — مرتب أبجدياً حسب اسم المصرف */}
+                        {/* تفصيل حسب المصارف — مرتب حسب عدد الحركات (الأكبر للأصغر) */}
                         <section className="mb-10 print:break-inside-avoid" dir="rtl">
                           <h2 className="text-lg font-bold mb-4 flex items-center gap-2 pb-2 w-fit" style={{ color: 'var(--text-strong)', borderBottom: '2px solid var(--primary-600)' }}>تفصيل حسب المصارف</h2>
                           <div className="overflow-x-auto rounded-2xl print:shadow-none" style={{ border: '2px solid var(--border-card)', boxShadow: '0 4px 20px rgba(15,23,42,0.08)' }}>
@@ -1154,7 +1167,7 @@ export function CtMatching() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {[...reportData.by_bank].sort((a, b) => (a.bank_name || '').localeCompare(b.bank_name || '', 'ar')).map((row, i) => (
+                                {[...reportData.by_bank].sort((a, b) => (Number(b.movement_count) || 0) - (Number(a.movement_count) || 0)).map((row, i) => (
                                   <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
                                     <td className="text-right py-3 px-5 text-slate-800 font-medium border-b border-slate-100">{row.bank_name}</td>
                                     <td className="text-right py-3 px-5 tabular-nums text-slate-700 border-b border-slate-100" dir="ltr">{row.movement_count.toLocaleString('en-US')}</td>
@@ -1172,19 +1185,20 @@ export function CtMatching() {
                         <section className="mb-10 print:break-inside-avoid" dir="rtl">
                           <h2 className="text-lg font-bold mb-4 flex items-center gap-2 pb-2 w-fit" style={{ color: 'var(--text-strong)', borderBottom: '2px solid var(--primary-600)' }}>تفصيل عمولة التحصيل حسب المديرية والمحافظة</h2>
                           {(reportData.by_directorate_governorate?.length ?? 0) > 0 ? (() => {
-                            const list = [...(reportData.by_directorate_governorate ?? [])].sort((a, b) => (b.sum_acq ?? 0) - (a.sum_acq ?? 0));
+                            const list = [...(reportData.by_directorate_governorate ?? [])].sort((a, b) => (Number(b.movement_count) || 0) - (Number(a.movement_count) || 0));
                             const totalAcq = reportData.summary.sum_acq || 1;
                             return (
                               <div className="overflow-x-auto rounded-2xl print:shadow-none" style={{ border: '2px solid var(--border-card)', boxShadow: '0 4px 20px rgba(15,23,42,0.08)' }}>
-                                  <table className="w-full border-collapse text-sm print-cols-7 ds-table" dir="rtl" role="grid">
-                                    <colgroup className="print-cols-7-group">
-                                      <col /><col /><col /><col /><col /><col /><col />
+                                  <table className="w-full border-collapse text-sm print-cols-8 ds-table" dir="rtl" role="grid">
+                                    <colgroup className="print-cols-8-group">
+                                      <col /><col /><col /><col /><col /><col /><col /><col />
                                     </colgroup>
                                     <thead>
                                       <tr className="table-header-dark report-table-head" style={{ background: 'linear-gradient(135deg, #026174 0%, #068294 100%)' }}>
                                         <th scope="col" className="text-right py-4 px-3 font-bold text-sm text-white">المحافظة</th>
                                         <th scope="col" className="text-right py-4 px-3 font-bold text-sm text-white">المديرية</th>
                                         <th scope="col" className="text-right py-4 px-3 font-bold text-sm text-white">عدد الحركات</th>
+                                        <th scope="col" className="text-right py-4 px-3 font-bold text-sm text-white">عدد الأجهزة</th>
                                         <th scope="col" className="text-right py-4 px-3 font-bold text-sm text-white">إجمالي المبلغ</th>
                                         <th scope="col" className="text-right py-4 px-3 font-bold text-sm text-white">الرسوم</th>
                                         <th scope="col" className="text-right py-4 px-3 font-bold text-sm text-white">عمولة التحصيل (ACQ)</th>
@@ -1197,10 +1211,11 @@ export function CtMatching() {
                                           <td className="text-right py-3 px-3 text-slate-800 font-medium border-b border-slate-100">{row.governorate}</td>
                                           <td className="text-right py-3 px-3 text-slate-800 border-b border-slate-100">{row.directorate_name}</td>
                                           <td className="text-right py-3 px-3 tabular-nums text-slate-700 border-b border-slate-100" dir="ltr">{row.movement_count.toLocaleString('en-US')}</td>
+                                          <td className="text-right py-3 px-3 tabular-nums text-slate-700 border-b border-slate-100" dir="ltr">{(row.device_count ?? 0).toLocaleString('en-US')}</td>
                                           <td className="text-right py-3 px-3 tabular-nums text-slate-700 border-b border-slate-100" dir="ltr">{formatNum(row.sum_amount)}</td>
                                           <td className="text-right py-3 px-3 tabular-nums text-slate-700 border-b border-slate-100" dir="ltr">{formatNum(row.sum_fees)}</td>
                                           <td className="text-right py-3 px-3 tabular-nums text-teal-700 font-semibold border-b border-slate-100" dir="ltr">{formatNum(row.sum_acq)}</td>
-                                          <td className="text-right py-3 px-3 tabular-nums text-slate-700 border-b border-slate-100" dir="ltr">{totalAcq ? `${((row.sum_acq / totalAcq) * 100).toFixed(1)}%` : '—'}</td>
+                                          <td className="text-right py-3 px-3 tabular-nums text-slate-700 border-b border-slate-100" dir="ltr">{totalAcq ? `${((row.sum_acq / totalAcq) * 100).toFixed(3)}%` : '—'}</td>
                                         </tr>
                                       ))}
                                     </tbody>
@@ -1212,7 +1227,7 @@ export function CtMatching() {
                           )}
                         </section>
 
-                        {/* عمولة التحصيل باليوم — جدول مرتب حسب التاريخ من الأقدم إلى الأحدث */}
+                        {/* عمولة التحصيل باليوم — جدول مرتب حسب عدد الحركات (الأكبر للأصغر) */}
                         <section className="mb-10 print:break-inside-avoid" dir="rtl">
                           <h2 className="text-lg font-bold mb-4 flex items-center gap-2 pb-2 w-fit" style={{ color: 'var(--text-strong)', borderBottom: '2px solid var(--primary-600)' }}>عمولة التحصيل (ACQ) باليوم — تفصيل</h2>
                           <div className="overflow-x-auto rounded-2xl print:shadow-none" style={{ border: '2px solid var(--border-card)', boxShadow: '0 4px 20px rgba(15,23,42,0.08)' }}>
@@ -1230,7 +1245,7 @@ export function CtMatching() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {[...reportData.by_day].sort((a, b) => (a.sttl_date || '').localeCompare(b.sttl_date || '')).map((row, i) => (
+                                {[...reportData.by_day].sort((a, b) => (Number(b.movement_count) || 0) - (Number(a.movement_count) || 0)).map((row, i) => (
                                   <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
                                     <td className="text-right py-3 px-5 font-medium text-slate-800 border-b border-slate-100" dir="ltr">{formatDate(row.sttl_date)}</td>
                                     <td className="text-right py-3 px-5 tabular-nums text-slate-700 border-b border-slate-100" dir="ltr">{row.movement_count.toLocaleString('en-US')}</td>

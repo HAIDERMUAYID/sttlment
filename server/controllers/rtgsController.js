@@ -1937,18 +1937,48 @@ async function getCtMatchingReport(req, res) {
         [fromNorm, toNorm]
       ),
       pool.query(
-        `SELECT
-          COALESCE(NULLIF(TRIM(g.governorate), ''), 'غير معرف') AS governorate,
-          COALESCE(NULLIF(TRIM(g.directorate_name), ''), 'غير معرف') AS directorate_name,
-          SUM(g.movement_count)::bigint AS movement_count,
-          COALESCE(SUM(g.sum_amount), 0) AS sum_amount,
-          COALESCE(SUM(g.sum_fees), 0) AS sum_fees,
-          COALESCE(SUM(g.sum_acq), 0) AS sum_acq
-         FROM gov_settlement_details g
-         WHERE g.sttl_date >= $1::date AND g.sttl_date <= $2::date
-         GROUP BY COALESCE(NULLIF(TRIM(g.governorate), ''), 'غير معرف'),
-                  COALESCE(NULLIF(TRIM(g.directorate_name), ''), 'غير معرف')
-         ORDER BY sum_acq DESC NULLS LAST`,
+        `WITH movement_agg AS (
+           SELECT
+             COALESCE(NULLIF(TRIM(g.governorate), ''), 'غير معرف') AS governorate,
+             COALESCE(NULLIF(TRIM(g.directorate_name), ''), 'غير معرف') AS directorate_name,
+             SUM(g.movement_count)::bigint AS movement_count,
+             COALESCE(SUM(g.sum_amount), 0) AS sum_amount,
+             COALESCE(SUM(g.sum_fees), 0) AS sum_fees,
+             COALESCE(SUM(g.sum_acq), 0) AS sum_acq
+           FROM gov_settlement_details g
+           WHERE g.sttl_date >= $1::date AND g.sttl_date <= $2::date
+           GROUP BY COALESCE(NULLIF(TRIM(g.governorate), ''), 'غير معرف'),
+                    COALESCE(NULLIF(TRIM(g.directorate_name), ''), 'غير معرف')
+         ),
+         devices_agg AS (
+           SELECT
+             d.governorate,
+             d.directorate_name,
+             COALESCE(SUM(COALESCE(m.device_count, 0)), 0)::bigint AS device_count
+           FROM (
+             SELECT DISTINCT
+               COALESCE(NULLIF(TRIM(g.governorate), ''), 'غير معرف') AS governorate,
+               COALESCE(NULLIF(TRIM(g.directorate_name), ''), 'غير معرف') AS directorate_name,
+               g.mer
+             FROM gov_settlement_details g
+             WHERE g.sttl_date >= $1::date AND g.sttl_date <= $2::date
+           ) d
+           LEFT JOIN merchants m ON m.merchant_id = d.mer
+           GROUP BY d.governorate, d.directorate_name
+         )
+         SELECT
+           ma.governorate,
+           ma.directorate_name,
+           ma.movement_count,
+           ma.sum_amount,
+           ma.sum_fees,
+           ma.sum_acq,
+           COALESCE(da.device_count, 0)::bigint AS device_count
+         FROM movement_agg ma
+         LEFT JOIN devices_agg da
+           ON da.governorate = ma.governorate
+          AND da.directorate_name = ma.directorate_name
+         ORDER BY ma.movement_count DESC NULLS LAST, ma.sum_acq DESC NULLS LAST`,
         [fromNorm, toNorm]
       ),
       pool.query(
@@ -1991,6 +2021,7 @@ async function getCtMatchingReport(req, res) {
       governorate: row.governorate || 'غير معرف',
       directorate_name: row.directorate_name || 'غير معرف',
       movement_count: parseInt(row.movement_count, 10) || 0,
+      device_count: parseInt(row.device_count, 10) || 0,
       sum_amount: round6(row.sum_amount),
       sum_fees: round6(row.sum_fees),
       sum_acq: round6(row.sum_acq),
