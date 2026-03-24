@@ -103,6 +103,15 @@ const formatNum = (n: number | null) => {
   return Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 6 });
 };
 
+const getPeriodDaysInclusive = (fromDate?: string | null, toDate?: string | null): number => {
+  if (!fromDate || !toDate) return 0;
+  const from = new Date(`${String(fromDate).slice(0, 10)}T00:00:00`);
+  const to = new Date(`${String(toDate).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return 0;
+  const diff = Math.floor((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+  return diff > 0 ? diff : 0;
+};
+
 /** بناء HTML تقرير CT للطباعة — مع نسب، مخطط أعمدة، شعار الشركة، وتنظيم احترافي */
 function buildReportPrintHtml(
   data: CtMatchingReportData,
@@ -213,8 +222,10 @@ function buildReportPrintHtml(
     </svg>
   </div>
 </section>`;
+  const periodDays = getPeriodDaysInclusive(data?.period?.sttl_date_from, data?.period?.sttl_date_to);
+  const chartSection = periodDays > 15 ? '' : chartSvg;
 
-  const byDayForTable = [...byDaySorted].sort((a, b) => (Number(b.movement_count) || 0) - (Number(a.movement_count) || 0));
+  const byDayForTable = [...byDaySorted].sort((a, b) => (a.sttl_date || '').localeCompare(b.sttl_date || ''));
   const byDayRows = byDayForTable.map((row, i) => {
     const acqVal = Number(row.sum_acq) || 0;
     const pct = totalAcq ? ((acqVal / totalAcq) * 100).toFixed(3) : '0.000';
@@ -284,7 +295,7 @@ function buildReportPrintHtml(
   </table>
 </section>`;
 
-  return `<div class="ct-report-content" style="display:block;padding:0;max-width:100%;min-height:100vh;background:#fff;"><article style="display:block;padding:16px 10px 32px;background:#f6fafb;color:#0f172a;-webkit-print-color-adjust:exact;print-color-adjust:exact;border-radius:0;max-width:100%;width:100%;">${head}${stampBlock}${kpi}${narrativeSection}${chartSvg}${byDayTable}${byBankTable}${dirGovTable}${ctTable}</article></div>`;
+  return `<div class="ct-report-content" style="display:block;padding:0;max-width:100%;min-height:100vh;background:#fff;"><article style="display:block;padding:16px 10px 32px;background:#f6fafb;color:#0f172a;-webkit-print-color-adjust:exact;print-color-adjust:exact;border-radius:0;max-width:100%;width:100%;">${head}${stampBlock}${kpi}${narrativeSection}${chartSection}${byDayTable}${byBankTable}${dirGovTable}${ctTable}</article></div>`;
 }
 
 /** صنف موحد لحقل التاريخ — متناسق مع التصميم */
@@ -324,6 +335,9 @@ export function CtMatching() {
   const reportContentRef = useRef<HTMLDivElement>(null);
   const detailContentRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+  const reportPeriodDays = reportData
+    ? getPeriodDaysInclusive(reportData.period?.sttl_date_from, reportData.period?.sttl_date_to)
+    : 0;
   const canCreateCt = useHasPermission('ct_matching', 'create_ct');
   const canEditCt = useHasPermission('ct_matching', 'edit_ct');
   const canDeleteCt = useHasPermission('ct_matching', 'delete_ct');
@@ -1132,22 +1146,24 @@ export function CtMatching() {
                         </section>
 
                         {/* مخطط عمولة التحصيل باليوم */}
-                        <section className="mb-10 print:break-inside-avoid">
-                          <h2 className="text-lg font-bold mb-4 flex items-center gap-2 pb-2 w-fit" style={{ color: 'var(--text-strong)', borderBottom: '2px solid var(--primary-600)' }}>مخطط عمولة التحصيل الحكومي (ACQ) باليوم</h2>
-                          <div className="rounded-2xl p-5 h-[300px] print:h-[280px]" style={{ border: '2px solid var(--border-card)', background: 'var(--surface)', boxShadow: '0 4px 20px rgba(15,23,42,0.08)' }}>
-                            <ResponsiveContainer width="100%" height="100%">
-                              <BarChart data={[...reportData.by_day].sort((a, b) => (a.sttl_date || '').localeCompare(b.sttl_date || '')).map((d) => ({ ...d, date: formatDate(d.sttl_date), acq: Number(d.sum_acq) }))} margin={{ top: 36, right: 24, left: 24, bottom: 24 }}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                                <XAxis dataKey="date" tick={{ fontSize: 12, fill: '#475569', fontWeight: 500 }} tickMargin={10} axisLine={{ stroke: '#94a3b8' }} />
-                                <YAxis tick={{ fontSize: 12, fill: '#475569', fontWeight: 500 }} tickFormatter={(v) => Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 })} width={58} axisLine={{ stroke: '#94a3b8' }} />
-                                <Tooltip formatter={(value: number) => [value?.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }), 'عمولة التحصيل (ACQ)']} contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0' }} />
-                                <Bar dataKey="acq" name="عمولة التحصيل (ACQ)" fill="#026174" radius={[6, 6, 0, 0]} maxBarSize={56}>
-                                  <LabelList dataKey="acq" position="top" formatter={(v: number) => Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 })} style={{ fontSize: 13, fontWeight: 700, fill: '#0f172a' }} />
-                                </Bar>
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </div>
-                        </section>
+                        {reportPeriodDays <= 15 && (
+                          <section className="mb-10 print:break-inside-avoid">
+                            <h2 className="text-lg font-bold mb-4 flex items-center gap-2 pb-2 w-fit" style={{ color: 'var(--text-strong)', borderBottom: '2px solid var(--primary-600)' }}>مخطط عمولة التحصيل الحكومي (ACQ) باليوم</h2>
+                            <div className="rounded-2xl p-5 h-[300px] print:h-[280px]" style={{ border: '2px solid var(--border-card)', background: 'var(--surface)', boxShadow: '0 4px 20px rgba(15,23,42,0.08)' }}>
+                              <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={[...reportData.by_day].sort((a, b) => (a.sttl_date || '').localeCompare(b.sttl_date || '')).map((d) => ({ ...d, date: formatDate(d.sttl_date), acq: Number(d.sum_acq) }))} margin={{ top: 36, right: 24, left: 24, bottom: 24 }}>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                                  <XAxis dataKey="date" tick={{ fontSize: 12, fill: '#475569', fontWeight: 500 }} tickMargin={10} axisLine={{ stroke: '#94a3b8' }} />
+                                  <YAxis tick={{ fontSize: 12, fill: '#475569', fontWeight: 500 }} tickFormatter={(v) => Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 })} width={58} axisLine={{ stroke: '#94a3b8' }} />
+                                  <Tooltip formatter={(value: number) => [value?.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 }), 'عمولة التحصيل (ACQ)']} contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0' }} />
+                                  <Bar dataKey="acq" name="عمولة التحصيل (ACQ)" fill="#026174" radius={[6, 6, 0, 0]} maxBarSize={56}>
+                                    <LabelList dataKey="acq" position="top" formatter={(v: number) => Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 })} style={{ fontSize: 13, fontWeight: 700, fill: '#0f172a' }} />
+                                  </Bar>
+                                </BarChart>
+                              </ResponsiveContainer>
+                            </div>
+                          </section>
+                        )}
 
                         {/* تفصيل حسب المصارف — مرتب حسب عدد الحركات (الأكبر للأصغر) */}
                         <section className="mb-10 print:break-inside-avoid" dir="rtl">
@@ -1227,7 +1243,7 @@ export function CtMatching() {
                           )}
                         </section>
 
-                        {/* عمولة التحصيل باليوم — جدول مرتب حسب عدد الحركات (الأكبر للأصغر) */}
+                        {/* عمولة التحصيل باليوم — جدول مرتب حسب التاريخ من الأقدم إلى الأحدث */}
                         <section className="mb-10 print:break-inside-avoid" dir="rtl">
                           <h2 className="text-lg font-bold mb-4 flex items-center gap-2 pb-2 w-fit" style={{ color: 'var(--text-strong)', borderBottom: '2px solid var(--primary-600)' }}>عمولة التحصيل (ACQ) باليوم — تفصيل</h2>
                           <div className="overflow-x-auto rounded-2xl print:shadow-none" style={{ border: '2px solid var(--border-card)', boxShadow: '0 4px 20px rgba(15,23,42,0.08)' }}>
@@ -1245,7 +1261,7 @@ export function CtMatching() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {[...reportData.by_day].sort((a, b) => (Number(b.movement_count) || 0) - (Number(a.movement_count) || 0)).map((row, i) => (
+                                {[...reportData.by_day].sort((a, b) => (a.sttl_date || '').localeCompare(b.sttl_date || '')).map((row, i) => (
                                   <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
                                     <td className="text-right py-3 px-5 font-medium text-slate-800 border-b border-slate-100" dir="ltr">{formatDate(row.sttl_date)}</td>
                                     <td className="text-right py-3 px-5 tabular-nums text-slate-700 border-b border-slate-100" dir="ltr">{row.movement_count.toLocaleString('en-US')}</td>
