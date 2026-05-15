@@ -29,6 +29,7 @@ const ChangePasswordV2 = lazy(() => import('./pages/change-password-v2').then(m 
 const TVSettingsV2 = lazy(() => import('./pages/tv-settings-v2').then(m => ({ default: m.TVSettingsV2 })));
 const Merchants = lazy(() => import('./pages/admin/Merchants'));
 const RTGS = lazy(() => import('./pages/admin/RTGS').then(m => ({ default: m.RTGS })));
+const RtgsBankMaps = lazy(() => import('./pages/admin/RtgsBankMaps').then(m => ({ default: m.RtgsBankMaps })));
 const RtgsSettings = lazy(() => import('./pages/admin/RtgsSettings').then(m => ({ default: m.RtgsSettings })));
 const GovernmentSettlements = lazy(() => import('./pages/admin/GovernmentSettlements').then(m => ({ default: m.GovernmentSettlements })));
 const SettlementDetailsTable = lazy(() => import('./pages/admin/SettlementDetailsTable').then(m => ({ default: m.SettlementDetailsTable })));
@@ -120,6 +121,16 @@ function App() {
               <Route path="dashboard" element={<RouteGuard><Suspense fallback={<SuspenseFallback />}><DashboardV2 /></Suspense></RouteGuard>} />
               <Route path="tasks" element={<RouteGuard><Suspense fallback={<SuspenseFallback />}><TasksV2 /></Suspense></RouteGuard>} />
               <Route path="rtgs" element={<RouteGuard><Suspense fallback={<SuspenseFallback />}><RTGS /></Suspense></RouteGuard>} />
+              <Route
+                path="rtgs-bank-maps"
+                element={
+                  <RouteGuard pageKey="rtgs">
+                    <Suspense fallback={<SuspenseFallback />}>
+                      <RtgsBankMaps />
+                    </Suspense>
+                  </RouteGuard>
+                }
+              />
               <Route path="government-settlements" element={<RouteGuard><Suspense fallback={<SuspenseFallback />}><GovernmentSettlements /></Suspense></RouteGuard>} />
               <Route path="settlement-details" element={<RouteGuard><Suspense fallback={<SuspenseFallback />}><SettlementDetailsTable /></Suspense></RouteGuard>} />
               <Route path="ct-matching" element={<RouteGuard><Suspense fallback={<SuspenseFallback />}><CtMatching /></Suspense></RouteGuard>} />

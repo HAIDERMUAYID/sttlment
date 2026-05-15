@@ -6,6 +6,10 @@ const {
   getRtgsFilterOptions,
   getRtgsBankNames,
   getSettlementMaps,
+  getRtgsUnmappedInstCodes,
+  createSettlementMap,
+  updateSettlementMap,
+  deleteSettlementMap,
   getImportLogs,
   deleteImportLog,
   deleteAllRtgs,
@@ -27,6 +31,26 @@ const {
   backfillGovSettlementSummaries,
 } = require('../controllers/rtgsController');
 const { authenticate, requirePermission } = require('../middleware/auth');
+const { hasPermission } = require('../utils/permissions');
+
+/** تعبئة مخزون التسويات: استيراد RTGS، أو (عرض التسويات الحكومية + تصدير RTGS) — للمحاسبين الذين لا يستوردون ملفات */
+function requireGovSettlementBackfill(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'غير مصرح - يرجى تسجيل الدخول' });
+  }
+  if (hasPermission(req.user.permissions, 'rtgs', 'import')) {
+    return next();
+  }
+  if (
+    hasPermission(req.user.permissions, 'government_settlements', 'view') &&
+    hasPermission(req.user.permissions, 'rtgs', 'export')
+  ) {
+    return next();
+  }
+  return res.status(403).json({
+    error: 'ليس لديك صلاحية لتعبئة جدول التسويات (يلزم: استيراد RTGS، أو عرض التسويات الحكومية مع تصدير RTGS).',
+  });
+}
 
 // رفع ملف CSV في الذاكرة (المتحكم يتوقع req.file.buffer)
 const uploadCsv = multer({
@@ -54,6 +78,10 @@ router.get('/', requirePermission('rtgs', 'view'), getRtgs);
 router.get('/filter-options', requirePermission('rtgs', 'view'), getRtgsFilterOptions);
 router.get('/bank-names', requirePermission('rtgs', 'view'), getRtgsBankNames);
 router.get('/settlement-maps', requirePermission('rtgs', 'view'), getSettlementMaps);
+router.get('/unmapped-inst-codes', requirePermission('rtgs', 'view'), getRtgsUnmappedInstCodes);
+router.post('/settlement-maps', requirePermission('rtgs', 'import'), createSettlementMap);
+router.put('/settlement-maps/:id', requirePermission('rtgs', 'import'), updateSettlementMap);
+router.delete('/settlement-maps/:id', requirePermission('rtgs', 'import'), deleteSettlementMap);
 router.get('/import-logs', requirePermission('rtgs', 'view_import_logs'), getImportLogs);
 router.delete('/import-logs/:id', requirePermission('rtgs', 'delete_import'), deleteImportLog);
 router.delete('/all', requirePermission('rtgs', 'delete_all'), deleteAllRtgs);
@@ -67,7 +95,7 @@ router.post('/match-rrn-excel', uploadExcel.single('file'), requirePermission('r
 
 router.get('/settings', requirePermission('rtgs_settings', 'view'), getRtgsSettings);
 router.put('/settings', requirePermission('rtgs_settings', 'edit'), updateRtgsSettings);
-router.post('/backfill-gov-settlements', requirePermission('rtgs', 'import'), backfillGovSettlementSummaries);
+router.post('/backfill-gov-settlements', requireGovSettlementBackfill, backfillGovSettlementSummaries);
 
 router.get('/acq-fees-summary', requirePermission('ct_matching', 'view'), getAcqFeesSummary);
 router.post('/ct-records', requirePermission('ct_matching', 'create_ct'), createCtRecord);

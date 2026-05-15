@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { toPng } from 'html-to-image';
 import { Link } from 'react-router-dom';
 import api from '@/lib/api';
@@ -80,6 +80,24 @@ const formatNum = (n: number | null) => {
   return Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 6 });
 };
 
+/** نطاق تاريخ افتراضي (أمس بتوقيت بغداد) — يُستخدم قبل تحميل إعدادات TV لتجنب جلب كل RTGS دفعة واحدة */
+function getBaghdadYesterdayRange() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  const opts = { timeZone: 'Asia/Baghdad', year: 'numeric' as const, month: '2-digit' as const, day: '2-digit' as const };
+  const y = new Intl.DateTimeFormat('en-CA', opts).format(d);
+  return { sttl_date_from: y, sttl_date_to: y };
+}
+
+const GOV_SETTLEMENTS_API_MS = 120000;
+const BACKFILL_GOV_API_MS = 600000;
+
+function isRequestAborted(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false;
+  const o = e as { code?: string; name?: string };
+  return o.code === 'ERR_CANCELED' || o.name === 'CanceledError';
+}
+
 function groupBySettlement(rows: SettlementByTranDateRow[]) {
   const groups: { key: string; sttl_date: string | null; bank_name: string | null; rows: SettlementByTranDateRow[]; totals: { movement_count: number; sum_amount: number; sum_fees: number; sum_acq: number; sum_sttle: number } }[] = [];
   const map = new Map<string, { sttl_date: string | null; bank_name: string | null; rows: SettlementByTranDateRow[] }>();
@@ -132,15 +150,22 @@ export function GovernmentSettlements() {
     return new Intl.DateTimeFormat('en-CA', opts).format(d); // YYYY-MM-DD
   }, []);
 
-  const [filters, setFilters] = useState({ sttl_date_from: '', sttl_date_to: '', bank_display_name: '' });
-  const [initializedFromSettings, setInitializedFromSettings] = useState(false);
+  const [filters, setFilters] = useState(() => {
+    const { sttl_date_from, sttl_date_to } = getBaghdadYesterdayRange();
+    return { sttl_date_from, sttl_date_to, bank_display_name: '' };
+  });
+  const tvSettingsInitRef = useRef(false);
   const [bankOptions, setBankOptions] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [detailGroup, setDetailGroup] = useState<ReturnType<typeof groupBySettlement>[number] | null>(null);
   const [detailViewMode, setDetailViewMode] = useState<'table' | 'cards'>('table');
   const [downloadingImage, setDownloadingImage] = useState(false);
   const [backfillLoading, setBackfillLoading] = useState(false);
-  const [detailsSettlement, setDetailsSettlement] = useState<{ sttl_date: string | null; bank_display_name: string | null } | null>(null);
+  const [detailsSettlement, setDetailsSettlement] = useState<{
+    sttl_date: string | null;
+    bank_display_name: string | null;
+    inst_id2: string | null;
+  } | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsRows, setDetailsRows] = useState<Array<{ iban: string; ministry_directorate_governorate: string; account_number: string; branch_name: string; branch_number: string; movement_count: number; sum_amount: number; sum_fees: number; sum_acq: number; sum_sttle: number }>>([]);
   /** إجماليات تفاصيل التسوية (للجدول والطباعة و Excel) */
@@ -159,27 +184,28 @@ export function GovernmentSettlements() {
   }, [detailsRows]);
   const detailContentRef = useRef<HTMLDivElement>(null);
   const printAreaRef = useRef<HTMLDivElement>(null);
+  const fetchGovAbortRef = useRef<AbortController | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
     if (!detailsSettlement?.sttl_date) return;
     const sttl = typeof detailsSettlement.sttl_date === 'string' ? detailsSettlement.sttl_date.slice(0, 10) : '';
-    const bank = detailsSettlement.bank_display_name || '';
+    const inst = detailsSettlement.inst_id2?.trim() || '';
+    const bank = detailsSettlement.bank_display_name?.trim() || '';
     const params = new URLSearchParams({ sttl_date: sttl });
-    if (bank) params.set('bank_display_name', bank);
+    if (inst) params.set('inst_id2', inst);
+    else if (bank) params.set('bank_display_name', bank);
     api.get(`/rtgs/government-settlement-details?${params.toString()}`)
       .then((res) => {
         setDetailsRows(res.data?.details ?? []);
-        if (!(res.data?.details?.length)) {
-          toast({ title: 'لا توجد تفاصيل', description: 'لم تُعبَّأ تفاصيل هذه التسوية. شغّل «تعبئة الجدول» ثم أعد تحميل الصفحة.', variant: 'destructive' });
-        }
       })
       .catch(() => {
         toast({ title: 'خطأ', description: 'فشل جلب تفاصيل التسوية', variant: 'destructive' });
         setDetailsRows([]);
       })
       .finally(() => setDetailsLoading(false));
-  }, [detailsSettlement?.sttl_date, detailsSettlement?.bank_display_name, toast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- لا نعيد الجلب عند تغيير مرجع toast فقط
+  }, [detailsSettlement?.sttl_date, detailsSettlement?.bank_display_name, detailsSettlement?.inst_id2]);
 
   useEffect(() => {
     api.get('/rtgs/bank-names').then((res) => {
@@ -188,13 +214,14 @@ export function GovernmentSettlements() {
   }, []);
 
   useEffect(() => {
-    if (initializedFromSettings) return;
-    setInitializedFromSettings(true);
+    if (tvSettingsInitRef.current) return;
+    tvSettingsInitRef.current = true;
     api.get('/tv-dashboard/settings').then((res) => {
       const s = res.data || {};
       const mode = s.settlementCardsDateMode || 'previous_day';
       const custom = String(s.settlementCardsCustomDate || '').trim().slice(0, 10);
-      let from = '', to = '';
+      let from = '',
+        to = '';
       if (mode === 'today') {
         from = todayStr;
         to = todayStr;
@@ -205,13 +232,16 @@ export function GovernmentSettlements() {
         from = yesterdayStr;
         to = yesterdayStr;
       }
-      setFilters((prev) => (prev.sttl_date_from || prev.sttl_date_to ? prev : { ...prev, sttl_date_from: from, sttl_date_to: to }));
+      setFilters((prev) => ({ ...prev, sttl_date_from: from, sttl_date_to: to }));
     }).catch(() => {
-      setFilters((prev) => (prev.sttl_date_from || prev.sttl_date_to ? prev : { ...prev, sttl_date_from: yesterdayStr, sttl_date_to: yesterdayStr }));
+      /* الفلاتر مُهيأة مسبقاً بأمس بغداد */
     });
-  }, [todayStr, yesterdayStr, initializedFromSettings]);
+  }, [todayStr, yesterdayStr]);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
+    fetchGovAbortRef.current?.abort();
+    const ac = new AbortController();
+    fetchGovAbortRef.current = ac;
     const query: Record<string, string> = {
       page: String(pagination.page),
       limit: String(pagination.limit),
@@ -221,33 +251,38 @@ export function GovernmentSettlements() {
     if (filters.bank_display_name) query.bank_display_name = filters.bank_display_name;
     const params = new URLSearchParams(query);
     const url = `/rtgs/government-settlements-by-transaction-date?${params.toString()}`;
-    const maxAttempts = 3;
-    let lastError: unknown;
     try {
       setLoading(true);
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-          const res = await api.get(url);
-          setData(res.data?.data ?? []);
-          setSummary(res.data?.summary ?? { total_settlements: 0, total_movements: 0, total_amount: 0, total_fees: 0, total_acq: 0, total_sttle: 0 });
-          setPagination((prev) => ({
-            ...prev,
-            ...(res.data?.pagination ?? {}),
-          }));
-          return;
-        } catch (e) {
-          lastError = e;
-          if (attempt < maxAttempts) await new Promise((r) => setTimeout(r, 800 * attempt));
-        }
-      }
-      throw lastError;
+      const res = await api.get(url, { timeout: GOV_SETTLEMENTS_API_MS, signal: ac.signal });
+      if (fetchGovAbortRef.current !== ac) return;
+      setData(res.data?.data ?? []);
+      setSummary(res.data?.summary ?? { total_settlements: 0, total_movements: 0, total_amount: 0, total_fees: 0, total_acq: 0, total_sttle: 0 });
+      setPagination((prev) => ({
+        ...prev,
+        ...(res.data?.pagination ?? {}),
+      }));
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { error?: string; detail?: string } } };
+      if (isRequestAborted(e)) return;
+      const err = e as {
+        code?: string;
+        message?: string;
+        response?: { data?: { error?: string; detail?: string } };
+      };
       const serverError = err.response?.data?.error;
       const detail = err.response?.data?.detail;
+      const isTimeout = err.code === 'ECONNABORTED';
+      const diskFull =
+        typeof detail === 'string' &&
+        (detail.toLowerCase().includes('no space left') || detail.includes('pgsql_tmp'));
       const description = serverError
-        ? (detail ? `${serverError}: ${detail}` : serverError)
-        : 'فشل جلب التسويات الحكومية. تحقق من الاتصال أو جرّب لاحقاً.';
+        ? diskFull
+          ? `${serverError}: مساحة القرص ممتلئة على خادم PostgreSQL (ملفات مؤقتة للفرز). حرّر مساحة ثم جرّب «تعبئة الجدول» أو تضييق نطاق التاريخ.`
+          : detail
+            ? `${serverError}: ${detail}`
+            : serverError
+        : isTimeout
+          ? 'انتهت مهلة جلب التسويات (الاستعلام ثقيل أو الخادم بطيء). جرّب تضييق نطاق التاريخ أو تعبئة جدول المخزون من RTGS ثم أعد المحاولة.'
+          : 'فشل جلب التسويات الحكومية. تحقق من الاتصال أو جرّب لاحقاً.';
       toast({
         title: 'خطأ',
         description,
@@ -255,13 +290,23 @@ export function GovernmentSettlements() {
       });
       setData([]);
     } finally {
-      setLoading(false);
+      if (fetchGovAbortRef.current === ac) {
+        setLoading(false);
+        fetchGovAbortRef.current = null;
+      }
     }
-  };
+  }, [pagination.page, pagination.limit, filters.sttl_date_from, filters.sttl_date_to, filters.bank_display_name, toast]);
 
   useEffect(() => {
     fetchData();
-  }, [pagination.page, filters.sttl_date_from, filters.sttl_date_to, filters.bank_display_name]);
+  }, [fetchData]);
+
+  useEffect(
+    () => () => {
+      fetchGovAbortRef.current?.abort();
+    },
+    []
+  );
 
   const handleFilterChange = (key: 'sttl_date_from' | 'sttl_date_to' | 'bank_display_name', value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -269,7 +314,8 @@ export function GovernmentSettlements() {
   };
 
   const resetFilters = () => {
-    setFilters({ sttl_date_from: '', sttl_date_to: '', bank_display_name: '' });
+    const { sttl_date_from, sttl_date_to } = getBaghdadYesterdayRange();
+    setFilters({ sttl_date_from, sttl_date_to, bank_display_name: '' });
     setPagination((prev) => ({ ...prev, page: 1 }));
   };
 
@@ -280,17 +326,22 @@ export function GovernmentSettlements() {
   const handleBackfill = async () => {
     setBackfillLoading(true);
     try {
-      const res = await api.post('/rtgs/backfill-gov-settlements');
+      const res = await api.post('/rtgs/backfill-gov-settlements', {}, { timeout: BACKFILL_GOV_API_MS });
       toast({
         title: 'تمت التعبئة',
         description: res.data?.message || `تم تعبئة ${res.data?.total_rows ?? 0} صفاً من ${res.data?.sources ?? 0} مصدر`,
       });
       fetchData();
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { error?: string } } };
+      const err = e as { response?: { data?: { error?: string }; status?: number }; message?: string };
+      const serverMsg = err.response?.data?.error;
+      const fallback =
+        err.response?.status === 403
+          ? 'تم رفض الطلب (صلاحيات). يلزم استيراد RTGS أو (عرض التسويات الحكومية مع تصدير RTGS).'
+          : 'فشل تعبئة جدول التسويات';
       toast({
         title: 'خطأ',
-        description: err.response?.data?.error ?? 'فشل تعبئة جدول التسويات',
+        description: serverMsg || err.message || fallback,
         variant: 'destructive',
       });
     } finally {
@@ -316,7 +367,9 @@ export function GovernmentSettlements() {
           bank_display_name: filters.bank_display_name || '',
         };
         const params = new URLSearchParams(query);
-        const res = await api.get(`/rtgs/government-settlements-by-transaction-date?${params.toString()}`);
+        const res = await api.get(`/rtgs/government-settlements-by-transaction-date?${params.toString()}`, {
+          timeout: GOV_SETTLEMENTS_API_MS,
+        });
         const chunk: SettlementByTranDateRow[] = res.data?.data ?? [];
         allData.push(...chunk);
         totalPages = res.data?.pagination?.totalPages ?? 1;
@@ -398,14 +451,19 @@ export function GovernmentSettlements() {
 
   const openSettlementDetails = (group: ReturnType<typeof groupBySettlement>[number]) => {
     const sttlDate = group.sttl_date ? (typeof group.sttl_date === 'string' ? group.sttl_date.slice(0, 10) : '') : '';
-    const bankName = group.bank_name || group.rows[0]?.inst_id2 || '';
-    if (!sttlDate || !bankName) {
+    const instId2 = group.rows[0]?.inst_id2 != null ? String(group.rows[0].inst_id2).trim() : '';
+    const bankName = group.bank_name || instId2 || '';
+    if (!sttlDate || (!instId2 && !bankName)) {
       toast({ title: 'تنبيه', description: 'لا يمكن جلب التفاصيل بدون تاريخ تسوية ومصرف', variant: 'destructive' });
       return;
     }
     setDetailsRows([]);
     setDetailsLoading(true);
-    setDetailsSettlement({ sttl_date: sttlDate, bank_display_name: bankName });
+    setDetailsSettlement({
+      sttl_date: sttlDate,
+      bank_display_name: bankName,
+      inst_id2: instId2 || null,
+    });
   };
 
   const handleDownloadAsImage = async () => {
@@ -987,12 +1045,15 @@ export function GovernmentSettlements() {
                   <button
                     type="button"
                     onClick={async () => {
-                      if (!detailsSettlement?.sttl_date || !detailsSettlement?.bank_display_name) return;
+                      if (!detailsSettlement?.sttl_date) return;
                       setDetailsLoading(true);
                       try {
                         await api.post('/rtgs/backfill-gov-settlements');
                         toast({ title: 'تمت التعبئة', description: 'تم تعبئة جدول التسويات والتفاصيل. جاري تحميل التفاصيل...' });
-                        const params = new URLSearchParams({ sttl_date: detailsSettlement.sttl_date, bank_display_name: detailsSettlement.bank_display_name });
+                        const params = new URLSearchParams({ sttl_date: detailsSettlement.sttl_date });
+                        const inst = detailsSettlement.inst_id2?.trim();
+                        if (inst) params.set('inst_id2', inst);
+                        else if (detailsSettlement.bank_display_name) params.set('bank_display_name', detailsSettlement.bank_display_name);
                         const res = await api.get(`/rtgs/government-settlement-details?${params.toString()}`);
                         setDetailsRows(res.data?.details ?? []);
                         fetchData();

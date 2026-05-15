@@ -26,6 +26,19 @@ interface DetailRow {
 interface SettlementOption {
   sttl_date: string;
   bank_display_name: string;
+  inst_id2: string | null;
+}
+
+const OPT_SEP = '|||';
+
+function settlementOptionValue(s: SettlementOption): string {
+  return [s.sttl_date, s.inst_id2 ?? '', s.bank_display_name].join(OPT_SEP);
+}
+
+function parseSettlementOptionValue(v: string): { sttl_date: string; inst_id2: string; bank_display_name: string } | null {
+  const parts = v.split(OPT_SEP);
+  if (parts.length < 3) return null;
+  return { sttl_date: parts[0], inst_id2: parts[1], bank_display_name: parts.slice(2).join(OPT_SEP) };
 }
 
 const formatDate = (d: string | null) => {
@@ -44,7 +57,8 @@ export function SettlementDetailsTable() {
   const [settlementsList, setSettlementsList] = useState<SettlementOption[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [selectedSttlDate, setSelectedSttlDate] = useState('');
-  const [selectedBank, setSelectedBank] = useState('');
+  /** قيمة الخيار المختار (تاريخ + inst_id2 + اسم العرض) — لجلب التفاصيل بـ inst_id2 عند توفره */
+  const [selectedSettlementValue, setSelectedSettlementValue] = useState('');
   const [detailsRows, setDetailsRows] = useState<DetailRow[]>([]);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [backfillLoading, setBackfillLoading] = useState(false);
@@ -82,31 +96,40 @@ export function SettlementDetailsTable() {
         const options: SettlementOption[] = [];
         for (const r of data) {
           const date = r.sttl_date ? String(r.sttl_date).slice(0, 10) : '';
+          const instId2 = r.inst_id2 != null ? String(r.inst_id2).trim() : '';
           const bank = r.bank_name ?? r.inst_id2 ?? '';
-          const key = `${date}|${bank}`;
+          const key = `${date}|${instId2 || bank}`;
           if (key && !seen.has(key)) {
             seen.add(key);
-            options.push({ sttl_date: date, bank_display_name: bank });
+            options.push({ sttl_date: date, bank_display_name: bank, inst_id2: instId2 || null });
           }
         }
         options.sort((a, b) => (b.sttl_date || '').localeCompare(a.sttl_date || ''));
         setSettlementsList(options);
         if (options.length && !selectedSttlDate) {
           setSelectedSttlDate(options[0].sttl_date);
-          setSelectedBank(options[0].bank_display_name);
+          setSelectedSettlementValue(settlementOptionValue(options[0]));
         }
       })
       .catch(() => toast({ title: 'خطأ', description: 'فشل جلب قائمة التسويات', variant: 'destructive' }))
       .finally(() => setListLoading(false));
   }, []);
 
+  const selectedDetail = useMemo(
+    () => parseSettlementOptionValue(selectedSettlementValue),
+    [selectedSettlementValue]
+  );
+
   useEffect(() => {
-    if (!selectedSttlDate || !selectedBank) {
+    const sel = selectedDetail;
+    if (!sel?.sttl_date || (!sel.inst_id2?.trim() && !sel.bank_display_name?.trim())) {
       setDetailsRows([]);
       return;
     }
     setDetailsLoading(true);
-    const params = new URLSearchParams({ sttl_date: selectedSttlDate, bank_display_name: selectedBank });
+    const params = new URLSearchParams({ sttl_date: sel.sttl_date });
+    if (sel.inst_id2.trim()) params.set('inst_id2', sel.inst_id2.trim());
+    else params.set('bank_display_name', sel.bank_display_name);
     api
       .get(`/rtgs/government-settlement-details?${params.toString()}`)
       .then((res) => setDetailsRows(res.data?.details ?? []))
@@ -115,14 +138,19 @@ export function SettlementDetailsTable() {
         toast({ title: 'خطأ', description: 'فشل جلب تفاصيل التسوية', variant: 'destructive' });
       })
       .finally(() => setDetailsLoading(false));
-  }, [selectedSttlDate, selectedBank]);
+  }, [selectedSettlementValue, toast]);
 
   const handleBackfill = async () => {
+    const sel = selectedDetail;
+    if (!sel?.sttl_date) return;
     setBackfillLoading(true);
     try {
       await api.post('/rtgs/backfill-gov-settlements');
       toast({ title: 'تمت التعبئة', description: 'تم تعبئة جدول التفاصيل. جاري تحميل البيانات...' });
-      const params = new URLSearchParams({ sttl_date: selectedSttlDate, bank_display_name: selectedBank });
+      const params = new URLSearchParams({ sttl_date: sel.sttl_date });
+      const inst = (sel.inst_id2 || '').trim();
+      if (inst) params.set('inst_id2', inst);
+      else if (sel.bank_display_name) params.set('bank_display_name', sel.bank_display_name);
       const res = await api.get(`/rtgs/government-settlement-details?${params.toString()}`);
       setDetailsRows(res.data?.details ?? []);
     } catch (e: unknown) {
@@ -134,7 +162,8 @@ export function SettlementDetailsTable() {
   };
 
   const handlePrint = () => {
-    const title = `تفاصيل التسوية — ${formatDate(selectedSttlDate)} / ${selectedBank}`;
+    const sel = selectedDetail;
+    const title = `تفاصيل التسوية — ${formatDate(sel?.sttl_date ?? null)} / ${sel?.bank_display_name ?? '—'}`;
     const printWindow = window.open('', '_blank', 'noopener,noreferrer');
     if (!printWindow) return;
     const rowsHtml = detailsRows.map((row) => `
@@ -246,7 +275,7 @@ export function SettlementDetailsTable() {
               onChange={(e) => {
                 setSelectedSttlDate(e.target.value);
                 const opts = settlementsList.filter((s) => s.sttl_date === e.target.value);
-                setSelectedBank(opts[0]?.bank_display_name ?? '');
+                setSelectedSettlementValue(opts[0] ? settlementOptionValue(opts[0]) : '');
               }}
               className="ds-input w-full py-2.5 px-4 rounded-xl border"
               style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}
@@ -260,14 +289,14 @@ export function SettlementDetailsTable() {
           <div className="flex-1 min-w-[200px]">
             <label className="block text-sm font-semibold mb-2" style={{ color: 'var(--text-strong)' }}>المصرف</label>
             <select
-              value={selectedBank}
-              onChange={(e) => setSelectedBank(e.target.value)}
+              value={selectedSettlementValue}
+              onChange={(e) => setSelectedSettlementValue(e.target.value)}
               className="ds-input w-full py-2.5 px-4 rounded-xl border"
               style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}
             >
               <option value="">— اختر المصرف —</option>
               {filteredOptions.map((s) => (
-                <option key={`${s.sttl_date}|${s.bank_display_name}`} value={s.bank_display_name}>{s.bank_display_name}</option>
+                <option key={settlementOptionValue(s)} value={settlementOptionValue(s)}>{s.bank_display_name}</option>
               ))}
             </select>
           </div>
@@ -300,7 +329,7 @@ export function SettlementDetailsTable() {
       <div className="rounded-2xl border overflow-hidden" style={{ borderColor: 'var(--border-card)', background: 'var(--bg-card)' }}>
         {listLoading ? (
           <Loading message="جاري جلب قائمة التسويات..." />
-        ) : !selectedSttlDate || !selectedBank ? (
+        ) : !selectedSttlDate || !selectedSettlementValue ? (
           <div className="py-16 text-center" style={{ color: 'var(--text-muted)' }}>
             <p className="m-0">اختر تاريخ التسوية والمصرف أعلاه لعرض جدول التفاصيل.</p>
           </div>

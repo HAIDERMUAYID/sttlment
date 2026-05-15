@@ -44,18 +44,18 @@ try {
     port: parseInt(u.port || '5432', 10),
     database: (u.pathname || '/').slice(1) || 'sttlment',
     ssl: useSSL ? { rejectUnauthorized: false } : false,
-    // حجم الـ pool: اضبط POOL_MAX في .env (مثلاً 10–20 حسب الحمل)
-    max: parseInt(process.env.POOL_MAX || '10', 10),
+    // حجم الـ pool: اضبط POOL_MAX في .env (مثلاً 15–30 عند استعلامات RTGS الثقيلة)
+    max: parseInt(process.env.POOL_MAX || '15', 10),
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
+    connectionTimeoutMillis: parseInt(process.env.PG_CONNECT_TIMEOUT_MS || '30000', 10),
   };
 } catch (e) {
   poolConfig = {
     connectionString: conn.trim(),
     ssl: useSSL ? { rejectUnauthorized: false } : false,
-    max: parseInt(process.env.POOL_MAX || '10', 10),
+    max: parseInt(process.env.POOL_MAX || '15', 10),
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
+    connectionTimeoutMillis: parseInt(process.env.PG_CONNECT_TIMEOUT_MS || '30000', 10),
   };
 }
 

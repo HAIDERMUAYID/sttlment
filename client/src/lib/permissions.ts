@@ -6,6 +6,7 @@ export const ROUTE_TO_PAGE: Record<string, string> = {
   '/templates': 'templates',
   '/categories': 'categories',
   '/rtgs': 'rtgs',
+  '/rtgs-bank-maps': 'rtgs',
   '/government-settlements': 'government_settlements',
   '/settlement-details': 'government_settlements',
   '/ct-matching': 'ct_matching',

@@ -24,6 +24,7 @@ import {
   ImageOff,
   FileSpreadsheet,
   Banknote,
+  Building2,
   LayoutList,
   Calculator,
   Wallet,
@@ -58,6 +59,7 @@ const menuItems = [
     title: 'التقارير والتحليلات',
     items: [
       { icon: FileSpreadsheet, label: 'RTGS', path: '/rtgs', pageKey: 'rtgs' },
+      { icon: Building2, label: 'مصارف RTGS (الأكواد)', path: '/rtgs-bank-maps', pageKey: 'rtgs' },
       { icon: Banknote, label: 'التسويات الحكومية', path: '/government-settlements', pageKey: 'government_settlements' },
       { icon: LayoutList, label: 'جدول تفاصيل التسويات', path: '/settlement-details', pageKey: 'government_settlements' },
       { icon: Calculator, label: 'مطابقة العمولات (CT)', path: '/ct-matching', pageKey: 'ct_matching' },
